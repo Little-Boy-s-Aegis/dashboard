@@ -83,3 +83,14 @@ type DashboardSummary struct {
 	AlertsByCategory map[string]int `json:"alertsByCategory"`
 	MitreCoverage    map[string]int `json:"mitreCoverage"`
 }
+
+type ActionLog struct {
+	ID         string    `json:"id"`
+	Timestamp  time.Time `json:"timestamp"`
+	Actor      string    `json:"actor"`      // "AI" or "SOC (username)"
+	ActionType string    `json:"actionType"` // "Isolate Host", "Block IP", "Terminate Process", "Revoke Credentials"
+	Target     string    `json:"target"`     // e.g. "Web-Prod-01", "IP 198.51.100.222"
+	Status     string    `json:"status"`     // "success", "failed", "pending"
+	Message    string    `json:"message"`    // Details of the action result
+}
+

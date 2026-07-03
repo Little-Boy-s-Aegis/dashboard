@@ -79,3 +79,14 @@ export interface DashboardSummary {
   alertsByCategory: Record<string, number>;
   mitreCoverage: Record<string, number>;
 }
+
+export interface ActionLog {
+  id: string;
+  timestamp: string;
+  actor: string;
+  actionType: string;
+  target: string;
+  status: 'success' | 'failed' | 'pending';
+  message: string;
+}
+

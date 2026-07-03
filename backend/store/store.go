@@ -12,15 +12,17 @@ import (
 )
 
 type Database struct {
-	Mu           sync.RWMutex
-	Agents       map[string]*models.Agent
-	Alerts       []*models.Alert
-	FIMEvents    []*models.FIMEvent
-	Logs         []*models.LogEntry
-	AIAnalyses   map[string]*models.AIAnalysis
-	AlertCounter int
-	FimCounter   int
-	LogCounter   int
+	Mu            sync.RWMutex
+	Agents        map[string]*models.Agent
+	Alerts        []*models.Alert
+	FIMEvents     []*models.FIMEvent
+	Logs          []*models.LogEntry
+	AIAnalyses    map[string]*models.AIAnalysis
+	ActionLogs    []*models.ActionLog
+	AlertCounter  int
+	FimCounter    int
+	LogCounter    int
+	ActionCounter int
 }
 
 var DB *Database
@@ -32,6 +34,7 @@ func init() {
 		FIMEvents:  make([]*models.FIMEvent, 0),
 		Logs:       make([]*models.LogEntry, 0),
 		AIAnalyses: make(map[string]*models.AIAnalysis),
+		ActionLogs: make([]*models.ActionLog, 0),
 	}
 	DB.seed()
 	go DB.startSimulator()
@@ -201,6 +204,37 @@ func (db *Database) seed() {
 			Message:    tmpl.msg,
 			SourceIP:   "198.51.100.42",
 			StatusCode: tmpl.code,
+		})
+	}
+
+	// Seed Action Logs (AI & SOC actions)
+	db.ActionCounter = 0
+	actions := []struct {
+		actor  string
+		aType  string
+		target string
+		status string
+		msg    string
+		ago    time.Duration
+	}{
+		{"AI Agent", "Isolate Host", "Web-Prod-01 (192.168.10.11)", "success", "Host isolated successfully. Outbound traffic blocked. Local firewall rules applied.", 2 * time.Hour},
+		{"SOC (Sarah Connor)", "Block IP", "IP 198.51.100.42", "success", "IP successfully blocked on external edge firewall.", 3 * time.Hour},
+		{"AI Agent", "Terminate Process", "svchost_cipher.exe on DB-Replica-01", "success", "Process svchost_cipher.exe (PID: 4802) successfully terminated.", 4 * time.Hour},
+		{"SOC (Alex Miller)", "Revoke Credentials", "Administrator", "success", "Administrator Active Directory credentials revoked. Password reset forced.", 6 * time.Hour},
+		{"AI Agent", "Block IP", "IP 203.0.113.88", "success", "Malicious C2 IP added to blocklist globally.", 8 * time.Hour},
+		{"SOC (Sarah Connor)", "Isolate Host", "AD-Controller-01 (192.168.10.20)", "failed", "Isolation request rejected: Target is a Domain Controller. Manual review required.", 12 * time.Hour},
+	}
+
+	for _, act := range actions {
+		db.ActionCounter++
+		db.ActionLogs = append(db.ActionLogs, &models.ActionLog{
+			ID:         fmt.Sprintf("act-%04d", db.ActionCounter),
+			Timestamp:  time.Now().Add(-act.ago),
+			Actor:      act.actor,
+			ActionType: act.aType,
+			Target:     act.target,
+			Status:     act.status,
+			Message:    act.msg,
 		})
 	}
 }
