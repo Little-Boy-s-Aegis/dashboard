@@ -28,6 +28,7 @@ type Alert struct {
 	Timestamp      time.Time `json:"timestamp"`
 	RawLog         string    `json:"rawLog"`
 	Status         string    `json:"status"` // open, investigating, resolved
+	Assignee       string    `json:"assignee"` // assignee analyst name
 }
 
 type FIMEvent struct {

@@ -515,3 +515,148 @@ func ResolveAlert(w http.ResponseWriter, r *http.Request) {
 		"alert":   alert,
 	})
 }
+
+// PUT /api/alerts/:id/assign
+func AssignAlert(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost && r.Method != http.MethodPut {
+		writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "Method not allowed"})
+		return
+	}
+
+	parts := strings.Split(r.URL.Path, "/")
+	if len(parts) < 4 {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "Invalid Alert ID"})
+		return
+	}
+	alertID := parts[3]
+
+	var req struct {
+		Assignee string `json:"assignee"`
+	}
+	err := json.NewDecoder(r.Body).Decode(&req)
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "Invalid request body"})
+		return
+	}
+
+	store.DB.Mu.Lock()
+	defer store.DB.Mu.Unlock()
+
+	var alert *models.Alert
+	for _, alt := range store.DB.Alerts {
+		if alt.ID == alertID {
+			alert = alt
+			break
+		}
+	}
+
+	if alert == nil {
+		writeJSON(w, http.StatusNotFound, map[string]string{"error": "Alert not found"})
+		return
+	}
+
+	alert.Assignee = req.Assignee
+	if req.Assignee != "" && alert.Status == "open" {
+		alert.Status = "investigating"
+	}
+
+	writeJSON(w, http.StatusOK, map[string]interface{}{
+		"message": "Alert assignee updated",
+		"alert":   alert,
+	})
+}
+
+// POST /api/alerts/bulk-resolve
+func BulkResolveAlerts(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "Method not allowed"})
+		return
+	}
+
+	var req struct {
+		IDs []string `json:"ids"`
+	}
+	err := json.NewDecoder(r.Body).Decode(&req)
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "Invalid request body"})
+		return
+	}
+
+	store.DB.Mu.Lock()
+	defer store.DB.Mu.Unlock()
+
+	resolvedCount := 0
+	affectedAgents := make(map[string]bool)
+
+	for _, id := range req.IDs {
+		for _, alt := range store.DB.Alerts {
+			if alt.ID == id {
+				alt.Status = "resolved"
+				affectedAgents[alt.AgentID] = true
+				resolvedCount++
+				break
+			}
+		}
+	}
+
+	// For each affected agent, re-verify if their status should go back to "active"
+	for agentID := range affectedAgents {
+		hasOtherCriticals := false
+		for _, alt := range store.DB.Alerts {
+			if alt.AgentID == agentID && alt.Status != "resolved" && (alt.Severity == "high" || alt.Severity == "critical") {
+				hasOtherCriticals = true
+				break
+			}
+		}
+		if !hasOtherCriticals {
+			if agent, exists := store.DB.Agents[agentID]; exists {
+				agent.Status = "active"
+			}
+		}
+	}
+
+	writeJSON(w, http.StatusOK, map[string]interface{}{
+		"message":       "Alerts resolved in bulk",
+		"resolvedCount": resolvedCount,
+	})
+}
+
+// POST /api/alerts/bulk-assign
+func BulkAssignAlerts(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "Method not allowed"})
+		return
+	}
+
+	var req struct {
+		IDs      []string `json:"ids"`
+		Assignee string   `json:"assignee"`
+	}
+	err := json.NewDecoder(r.Body).Decode(&req)
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "Invalid request body"})
+		return
+	}
+
+	store.DB.Mu.Lock()
+	defer store.DB.Mu.Unlock()
+
+	assignedCount := 0
+	for _, id := range req.IDs {
+		for _, alt := range store.DB.Alerts {
+			if alt.ID == id {
+				alt.Assignee = req.Assignee
+				if req.Assignee != "" && alt.Status == "open" {
+					alt.Status = "investigating"
+				}
+				assignedCount++
+				break
+			}
+		}
+	}
+
+	writeJSON(w, http.StatusOK, map[string]interface{}{
+		"message":       "Alerts assigned in bulk",
+		"assignedCount": assignedCount,
+	})
+}
