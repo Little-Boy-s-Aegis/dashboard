@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { Shield, KeyRound, Cpu, Terminal, RefreshCw, Eye } from 'lucide-react';
+import { Shield, KeyRound, RefreshCw, Eye } from 'lucide-react';
 
 interface Props {
   onLoginSuccess: (username: string) => void;
@@ -12,7 +12,6 @@ export default function Login({ onLoginSuccess }: Props) {
   const [step, setStep] = useState<1 | 2>(1); // 1 = Request token, 2 = Verify token
   const [loading, setLoading] = useState(false);
   const [errorMsg, setErrorMsg] = useState('');
-  const [generatedOtp, setGeneratedOtp] = useState('');
   const [otpExpiry, setOtpExpiry] = useState<Date | null>(null);
   const [secondsLeft, setSecondsLeft] = useState(0);
 
@@ -22,7 +21,6 @@ export default function Login({ onLoginSuccess }: Props) {
       const left = Math.max(0, Math.round((otpExpiry.getTime() - new Date().getTime()) / 1000));
       setSecondsLeft(left);
       if (left === 0) {
-        setGeneratedOtp('');
         setOtpExpiry(null);
         setErrorMsg('One-Time Token has expired. Please request a new one.');
         setStep(1);
@@ -55,7 +53,6 @@ export default function Login({ onLoginSuccess }: Props) {
       });
       const data = await res.json();
       if (res.ok) {
-        setGeneratedOtp(data.token);
         setOperatorName(data.username);
         setOtpExpiry(new Date(data.expiry));
         setStep(2);
@@ -86,7 +83,6 @@ export default function Login({ onLoginSuccess }: Props) {
       });
       const data = await res.json();
       if (res.ok) {
-        setGeneratedOtp('');
         setOtpExpiry(null);
         onLoginSuccess(data.username);
       } else {
