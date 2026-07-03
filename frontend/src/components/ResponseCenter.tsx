@@ -36,11 +36,11 @@ export default function ResponseCenter({ agents, alerts, actions, timeRange, set
     const diffMinutes = (now - alertTime) / (1000 * 60);
     switch (timeRange) {
       case '15m': return diffMinutes <= 15;
-      case '1h':  return diffMinutes <= 60;
-      case '4h':  return diffMinutes <= 240;
+      case '1h': return diffMinutes <= 60;
+      case '4h': return diffMinutes <= 240;
       case '12h': return diffMinutes <= 720;
       case '24h':
-      default:    return diffMinutes <= 1440;
+      default: return diffMinutes <= 1440;
     }
   };
 
@@ -127,7 +127,7 @@ export default function ResponseCenter({ agents, alerts, actions, timeRange, set
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 16, animation: 'fadeInUp 0.25s ease-out' }}>
-      
+
       {/* Page Header */}
       <div className="page-header" style={{ marginBottom: 0 }}>
         <div>
@@ -135,10 +135,10 @@ export default function ResponseCenter({ agents, alerts, actions, timeRange, set
           <p className="page-subtitle">Perform manual mitigation controls and orchestration</p>
         </div>
         <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-          <select 
-            className="select-input" 
-            value={timeRange} 
-            onChange={e => setTimeRange(e.target.value)} 
+          <select
+            className="select-input"
+            value={timeRange}
+            onChange={e => setTimeRange(e.target.value)}
             style={{ minWidth: 80, padding: '4px 8px', fontSize: '0.78rem', height: 28 }}
           >
             <option value="15m">15m</option>
@@ -161,6 +161,7 @@ export default function ResponseCenter({ agents, alerts, actions, timeRange, set
             if (!agent) return null;
             const highestSev = getHighestSeverityForAgent(agent.id);
             const score = getAbnormalityScore(agent.id);
+            const totalEvents = filteredAlerts.filter(a => a.agentId === agent.id && ['low', 'medium', 'high', 'critical'].includes(a.severity)).length;
             return (
               <div key={agent.id} style={{
                 padding: '10px 14px', background: 'var(--bg-surface)', border: '1px solid var(--border-1)',
@@ -172,15 +173,25 @@ export default function ResponseCenter({ agents, alerts, actions, timeRange, set
                   </span>
                   <span style={{ fontSize: '0.7rem', color: 'var(--text-3)' }}>{agent.ip}</span>
                 </div>
-                
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: '0.78rem' }}>
-                  <span style={{ color: 'var(--text-2)' }}>Highest Severity:</span>
-                  <span className={`badge ${getSeverityBadgeColor(highestSev)}`}>{highestSev}</span>
+
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10, borderTop: '1px solid rgba(255,255,255,0.03)', borderBottom: '1px solid rgba(255,255,255,0.03)', padding: '5px 0' }}>
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+                    <span style={{ fontSize: '0.62rem', color: 'var(--text-3)', textTransform: 'uppercase', letterSpacing: '0.03em' }}>Highest Event</span>
+                    <div>
+                      <span className={`badge ${getSeverityBadgeColor(highestSev)}`} style={{ fontSize: '0.58rem', padding: '1px 4px' }}>
+                        {highestSev}
+                      </span>
+                    </div>
+                  </div>
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+                    <span style={{ fontSize: '0.62rem', color: 'var(--text-3)', textTransform: 'uppercase', letterSpacing: '0.03em' }}>Total Events</span>
+                    <strong style={{ fontSize: '0.78rem', color: totalEvents > 0 ? 'var(--accent)' : 'var(--text-2)' }}>{totalEvents}</strong>
+                  </div>
                 </div>
 
                 <div style={{ display: 'flex', flexDirection: 'column', gap: 3, marginTop: 2 }}>
                   <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.74rem' }}>
-                    <span style={{ color: 'var(--text-2)' }}>Abnormality Level:</span>
+                    <span style={{ color: 'var(--text-2)' }}>Abnormality:</span>
                     <strong style={{ color: score > 70 ? 'var(--critical-dim)' : score > 40 ? 'var(--high-dim)' : 'var(--low-dim)' }}>
                       {score}%
                     </strong>
@@ -201,10 +212,10 @@ export default function ResponseCenter({ agents, alerts, actions, timeRange, set
 
       {/* 2. BOTTOM SECTION: Forms, Logs, and Orchestrator */}
       <div style={{ display: 'grid', gridTemplateColumns: '1.2fr 1fr', gap: 16 }}>
-        
+
         {/* Left Column: Form & Orchestrator */}
         <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
-          
+
           {/* Remediation Form */}
           <form className="glass-panel" onSubmit={handleTrigger} style={{ padding: 16, display: 'flex', flexDirection: 'column', gap: 12 }}>
             <h3 style={{ fontSize: '0.82rem', display: 'flex', alignItems: 'center', gap: 6, color: 'var(--text-0)', borderBottom: '1px solid var(--border-1)', paddingBottom: 8, marginBottom: 2 }}>
@@ -241,7 +252,7 @@ export default function ResponseCenter({ agents, alerts, actions, timeRange, set
                     {agents.map(a => <option key={a.id} value={a.name}>{a.name}</option>)}
                   </select>
                 ) : (
-                  <input type="text" className="search-input" value={target} 
+                  <input type="text" className="search-input" value={target}
                     onChange={e => {
                       const val = e.target.value;
                       if (actionType === 'Block IP') {
@@ -251,16 +262,16 @@ export default function ResponseCenter({ agents, alerts, actions, timeRange, set
                       }
                     }}
                     placeholder={
-                      actionType === 'Block IP' ? 'e.g. 198.51.100.222' : 
-                      actionType === 'Terminate Process' ? 'e.g. svchost_cipher.exe' : 'e.g. Administrator'
-                    } 
+                      actionType === 'Block IP' ? 'e.g. 198.51.100.222' :
+                        actionType === 'Terminate Process' ? 'e.g. svchost_cipher.exe' : 'e.g. Administrator'
+                    }
                   />
                 )}
               </div>
 
               <div style={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
                 <label style={{ fontSize: '0.66rem', color: 'var(--text-3)', fontWeight: 600, textTransform: 'uppercase' }}>Mitigation Message</label>
-                <input type="text" className="search-input" value={message} 
+                <input type="text" className="search-input" value={message}
                   onChange={e => setMessage(e.target.value.replace(/[<>&"']/g, '').slice(0, 100))}
                   placeholder="Optional comment/reason..." />
               </div>
@@ -288,6 +299,7 @@ export default function ResponseCenter({ agents, alerts, actions, timeRange, set
                     <th style={{ textAlign: 'center' }}>High</th>
                     <th style={{ textAlign: 'center' }}>Medium</th>
                     <th style={{ textAlign: 'center' }}>Low</th>
+                    <th style={{ textAlign: 'center' }}>Highest Level</th>
                     <th>Mitigation</th>
                   </tr>
                 </thead>
@@ -297,7 +309,8 @@ export default function ResponseCenter({ agents, alerts, actions, timeRange, set
                     const hCount = filteredAlerts.filter(x => x.agentId === a.id && x.severity === 'high' && x.status !== 'resolved').length;
                     const mCount = filteredAlerts.filter(x => x.agentId === a.id && x.severity === 'medium' && x.status !== 'resolved').length;
                     const lCount = filteredAlerts.filter(x => x.agentId === a.id && x.severity === 'low' && x.status !== 'resolved').length;
-                    
+                    const highestSev = getHighestSeverityForAgent(a.id);
+
                     let statusColor = 'var(--low)';
                     let statusLabel = 'SECURED';
                     if (a.status === 'disconnected') {
@@ -321,6 +334,11 @@ export default function ResponseCenter({ agents, alerts, actions, timeRange, set
                         <td style={{ textAlign: 'center', color: hCount > 0 ? 'var(--high)' : 'var(--text-3)', fontWeight: hCount > 0 ? 600 : 400 }}>{hCount}</td>
                         <td style={{ textAlign: 'center', color: mCount > 0 ? 'var(--medium)' : 'var(--text-3)', fontWeight: mCount > 0 ? 600 : 400 }}>{mCount}</td>
                         <td style={{ textAlign: 'center', color: lCount > 0 ? 'var(--low)' : 'var(--text-3)', fontWeight: lCount > 0 ? 600 : 400 }}>{lCount}</td>
+                        <td style={{ textAlign: 'center' }}>
+                          <span className={`badge ${getSeverityBadgeColor(highestSev)}`} style={{ fontSize: '0.58rem', padding: '1px 4px' }}>
+                            {highestSev}
+                          </span>
+                        </td>
                         <td>
                           <span style={{ fontSize: '0.7rem', fontWeight: 600, color: statusColor, display: 'flex', alignItems: 'center', gap: 4 }}>
                             <span style={{ width: 5, height: 5, background: statusColor, borderRadius: '50%' }} />
