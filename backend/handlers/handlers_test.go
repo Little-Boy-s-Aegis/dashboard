@@ -53,6 +53,40 @@ func TestGetAgents(t *testing.T) {
 	}
 }
 
+func TestGetAgentDetail(t *testing.T) {
+	t.Run("Valid Agent ID", func(t *testing.T) {
+		req := httptest.NewRequest("GET", "/api/agents/agent-01", nil)
+		w := httptest.NewRecorder()
+
+		GetAgentDetail(w, req)
+
+		if w.Code != http.StatusOK {
+			t.Errorf("Expected status 200, got %d", w.Code)
+		}
+
+		var res struct {
+			Agent models.Agent `json:"agent"`
+		}
+		if err := json.Unmarshal(w.Body.Bytes(), &res); err != nil {
+			t.Fatal("Failed to parse agent detail")
+		}
+		if res.Agent.ID != "agent-01" {
+			t.Errorf("Expected agent-01, got %s", res.Agent.ID)
+		}
+	})
+
+	t.Run("Invalid Agent ID", func(t *testing.T) {
+		req := httptest.NewRequest("GET", "/api/agents/agent-nonexistent", nil)
+		w := httptest.NewRecorder()
+
+		GetAgentDetail(w, req)
+
+		if w.Code != http.StatusNotFound {
+			t.Errorf("Expected status 404, got %d", w.Code)
+		}
+	})
+}
+
 func TestGetFimEvents(t *testing.T) {
 	req := httptest.NewRequest("GET", "/api/fim", nil)
 	w := httptest.NewRecorder()
@@ -93,7 +127,23 @@ func TestAlertOperations(t *testing.T) {
 
 	targetAlertID := alerts[0].ID
 
-	// 2. Assign Alert
+	// 2. Get Alert Detail (Valid)
+	req = httptest.NewRequest("GET", "/api/alerts/"+targetAlertID, nil)
+	w = httptest.NewRecorder()
+	GetAlertDetail(w, req)
+	if w.Code != http.StatusOK {
+		t.Errorf("Expected status 200, got %d", w.Code)
+	}
+
+	// 3. Get Alert Detail (Invalid)
+	req = httptest.NewRequest("GET", "/api/alerts/al-nonexistent", nil)
+	w = httptest.NewRecorder()
+	GetAlertDetail(w, req)
+	if w.Code != http.StatusNotFound {
+		t.Errorf("Expected status 404, got %d", w.Code)
+	}
+
+	// 4. Assign Alert
 	payload := `{"assignee":"Sarah Connor"}`
 	req = httptest.NewRequest("POST", "/api/alerts/"+targetAlertID+"/assign", bytes.NewBufferString(payload))
 	w = httptest.NewRecorder()
@@ -103,13 +153,45 @@ func TestAlertOperations(t *testing.T) {
 		t.Errorf("Expected assign status 200, got %d", w.Code)
 	}
 
-	// 3. Resolve Alert
+	// 5. Assign Alert (Invalid ID)
+	req = httptest.NewRequest("POST", "/api/alerts/al-nonexistent/assign", bytes.NewBufferString(payload))
+	w = httptest.NewRecorder()
+	AssignAlert(w, req)
+	if w.Code != http.StatusNotFound {
+		t.Errorf("Expected assign status 404 for invalid ID, got %d", w.Code)
+	}
+
+	// 6. Analyze Alert
+	req = httptest.NewRequest("POST", "/api/alerts/"+targetAlertID+"/analyze", nil)
+	w = httptest.NewRecorder()
+	AnalyzeAlert(w, req)
+	if w.Code != http.StatusOK {
+		t.Errorf("Expected analyze status 200, got %d", w.Code)
+	}
+
+	// 7. Analyze Alert (Invalid ID)
+	req = httptest.NewRequest("POST", "/api/alerts/al-nonexistent/analyze", nil)
+	w = httptest.NewRecorder()
+	AnalyzeAlert(w, req)
+	if w.Code != http.StatusNotFound {
+		t.Errorf("Expected analyze status 404 for invalid ID, got %d", w.Code)
+	}
+
+	// 8. Resolve Alert
 	req = httptest.NewRequest("POST", "/api/alerts/"+targetAlertID+"/resolve", nil)
 	w = httptest.NewRecorder()
 	ResolveAlert(w, req)
 
 	if w.Code != http.StatusOK {
 		t.Errorf("Expected resolve status 200, got %d", w.Code)
+	}
+
+	// 9. Resolve Alert (Invalid ID)
+	req = httptest.NewRequest("POST", "/api/alerts/al-nonexistent/resolve", nil)
+	w = httptest.NewRecorder()
+	ResolveAlert(w, req)
+	if w.Code != http.StatusNotFound {
+		t.Errorf("Expected resolve status 404 for invalid ID, got %d", w.Code)
 	}
 }
 
@@ -216,6 +298,17 @@ func TestSimulationAndActions(t *testing.T) {
 
 		if res.Actor != "SOC (admin)" {
 			t.Errorf("Expected Actor to be SOC (admin), got %s", res.Actor)
+		}
+	})
+
+	t.Run("Get Actions list", func(t *testing.T) {
+		req := httptest.NewRequest("GET", "/api/actions", nil)
+		w := httptest.NewRecorder()
+
+		GetActions(w, req)
+
+		if w.Code != http.StatusOK {
+			t.Errorf("Expected status 200, got %d", w.Code)
 		}
 	})
 }
