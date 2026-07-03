@@ -86,6 +86,16 @@ func (db *Database) seed() {
 		timeAgo := time.Duration(24-i) * time.Hour
 		alertTime := time.Now().Add(-timeAgo)
 
+		status := "open"
+		assignee := ""
+		if i%3 == 1 {
+			status = "investigating"
+			assignee = "Alex Miller"
+		} else if i%3 == 2 {
+			status = "resolved"
+			assignee = "Sarah Connor"
+		}
+
 		db.Alerts = append(db.Alerts, &models.Alert{
 			ID:             alertID,
 			RuleID:         fmt.Sprintf("rule-10%03d", techIdx),
@@ -99,7 +109,8 @@ func (db *Database) seed() {
 			Category:       tech.cat,
 			Timestamp:      alertTime,
 			RawLog:         fmt.Sprintf(`{"timestamp":"%s","rule":{"id":"%s","description":"%s","level":%d},"agent":{"id":"%s","name":"%s","ip":"%s"},"mitre":{"id":"%s","tactics":%v}}`, alertTime.Format(time.RFC3339), fmt.Sprintf("rule-10%03d", techIdx), tech.title, 8, agent.ID, agent.Name, agent.IP, tech.tech, tech.tacs),
-			Status:         "open",
+			Status:         status,
+			Assignee:       assignee,
 		})
 	}
 

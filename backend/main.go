@@ -45,10 +45,14 @@ func main() {
 			handlers.AnalyzeAlert(w, r)
 		} else if strings.HasSuffix(r.URL.Path, "/resolve") {
 			handlers.ResolveAlert(w, r)
+		} else if strings.HasSuffix(r.URL.Path, "/assign") {
+			handlers.AssignAlert(w, r)
 		} else {
 			handlers.GetAlertDetail(w, r)
 		}
 	})
+	mux.HandleFunc("/api/alerts/bulk-resolve", handlers.BulkResolveAlerts)
+	mux.HandleFunc("/api/alerts/bulk-assign", handlers.BulkAssignAlerts)
 	mux.HandleFunc("/api/fim", handlers.GetFimEvents)
 	mux.HandleFunc("/api/logs", handlers.GetLogs)
 	mux.HandleFunc("/api/simulate", handlers.TriggerSimulation)

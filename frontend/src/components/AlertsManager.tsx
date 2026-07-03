@@ -7,6 +7,8 @@ interface AlertsManagerProps {
   onRefresh: () => void;
 }
 
+const ANALYSTS = ['Alex Miller', 'Sarah Connor', 'John Doe', 'AI Copilot'];
+
 export default function AlertsManager({ alerts, onRefresh }: AlertsManagerProps) {
   const [selectedAlertId, setSelectedAlertId] = useState<string | null>(null);
   const [severityFilter, setSeverityFilter] = useState('');
@@ -17,7 +19,10 @@ export default function AlertsManager({ alerts, onRefresh }: AlertsManagerProps)
   const [loadingAI, setLoadingAI] = useState<string | null>(null);
   const [copiedId, setCopiedId] = useState<string | null>(null);
 
-  // Filter alerts locally (though the API supports it, local filtering is instant and smooth)
+  // Selection state for checkboxes
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+
+  // Filter alerts locally
   const filteredAlerts = alerts.filter(alert => {
     if (severityFilter && alert.severity !== severityFilter) return false;
     if (categoryFilter && alert.category !== categoryFilter) return false;
@@ -34,6 +39,38 @@ export default function AlertsManager({ alerts, onRefresh }: AlertsManagerProps)
   });
 
   const selectedAlert = alerts.find(a => a.id === selectedAlertId);
+
+  // Toggle selection for an alert ID
+  const toggleSelect = (id: string, e: React.MouseEvent) => {
+    e.stopPropagation(); // Prevent opening detail panel
+    setSelectedIds(prev => {
+      const next = new Set(prev);
+      if (next.has(id)) {
+        next.delete(id);
+      } else {
+        next.add(id);
+      }
+      return next;
+    });
+  };
+
+  // Toggle select all filtered alerts
+  const isAllSelected = filteredAlerts.length > 0 && filteredAlerts.every(a => selectedIds.has(a.id));
+  const toggleSelectAll = () => {
+    if (isAllSelected) {
+      setSelectedIds(prev => {
+        const next = new Set(prev);
+        filteredAlerts.forEach(a => next.delete(a.id));
+        return next;
+      });
+    } else {
+      setSelectedIds(prev => {
+        const next = new Set(prev);
+        filteredAlerts.forEach(a => next.add(a.id));
+        return next;
+      });
+    }
+  };
 
   // Fetch AI analysis from backend
   const handleAIAnalyze = async (alertId: string) => {
@@ -54,7 +91,7 @@ export default function AlertsManager({ alerts, onRefresh }: AlertsManagerProps)
     }
   };
 
-  // Resolve alert
+  // Resolve single alert
   const handleResolve = async (alertId: string) => {
     try {
       const response = await fetch(`/api/alerts/${alertId}/resolve`, {
@@ -62,6 +99,58 @@ export default function AlertsManager({ alerts, onRefresh }: AlertsManagerProps)
       });
       if (response.ok) {
         onRefresh(); // Refresh dashboard data
+      }
+    } catch (e) {
+      console.error(e);
+    }
+  };
+
+  // Assign single alert
+  const handleAssign = async (alertId: string, assignee: string) => {
+    try {
+      const response = await fetch(`/api/alerts/${alertId}/assign`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ assignee })
+      });
+      if (response.ok) {
+        onRefresh();
+      }
+    } catch (e) {
+      console.error(e);
+    }
+  };
+
+  // Bulk Resolve alerts
+  const handleBulkResolve = async () => {
+    if (selectedIds.size === 0) return;
+    try {
+      const response = await fetch('/api/alerts/bulk-resolve', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ids: Array.from(selectedIds) })
+      });
+      if (response.ok) {
+        setSelectedIds(new Set());
+        onRefresh();
+      }
+    } catch (e) {
+      console.error(e);
+    }
+  };
+
+  // Bulk Assign alerts
+  const handleBulkAssign = async (assignee: string) => {
+    if (selectedIds.size === 0) return;
+    try {
+      const response = await fetch('/api/alerts/bulk-assign', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ids: Array.from(selectedIds), assignee })
+      });
+      if (response.ok) {
+        setSelectedIds(new Set());
+        onRefresh();
       }
     } catch (e) {
       console.error(e);
@@ -78,7 +167,7 @@ export default function AlertsManager({ alerts, onRefresh }: AlertsManagerProps)
     <div style={{ display: 'grid', gridTemplateColumns: selectedAlert ? '1.2fr 1fr' : '1fr', gap: '24px', transition: 'all 0.3s ease' }}>
       
       {/* List Column */}
-      <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: '16px', minWidth: 0 }}>
         <div className="page-header" style={{ marginBottom: '16px' }}>
           <div>
             <h1 className="page-title">Alarms & Incidents</h1>
@@ -96,7 +185,7 @@ export default function AlertsManager({ alerts, onRefresh }: AlertsManagerProps)
               className="search-input"
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
-              style={{ border: 'none', background: 'transparent', padding: '6px 0' }}
+              style={{ border: 'none', background: 'transparent', padding: '6px 0', width: '100%' }}
             />
           </div>
           <select
@@ -125,16 +214,81 @@ export default function AlertsManager({ alerts, onRefresh }: AlertsManagerProps)
           </select>
         </div>
 
+        {/* Bulk Action Panel */}
+        {selectedIds.size > 0 && (
+          <div className="glass-panel" style={{
+            padding: '12px 18px',
+            display: 'flex',
+            justifyContent: 'space-between',
+            alignItems: 'center',
+            background: 'rgba(167, 139, 250, 0.05)',
+            border: '1px solid rgba(167, 139, 250, 0.25)',
+            borderRadius: '8px',
+            animation: 'flashNew 0.3s ease-out'
+          }}>
+            <div style={{ fontSize: '0.85rem', color: '#cbd5e1', display: 'flex', alignItems: 'center', gap: '8px' }}>
+              <Sparkles size={16} style={{ color: '#a78bfa' }} />
+              <span>Selected <strong>{selectedIds.size}</strong> {selectedIds.size === 1 ? 'alert' : 'alerts'}</span>
+            </div>
+            <div style={{ display: 'flex', gap: '12px', alignItems: 'center' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                <span style={{ fontSize: '0.75rem', color: '#94a3b8' }}>Assign to:</span>
+                <select
+                  onChange={(e) => {
+                    if (e.target.value) {
+                      handleBulkAssign(e.target.value);
+                      e.target.value = ''; // Reset select
+                    }
+                  }}
+                  style={{
+                    background: '#1c1c24',
+                    border: '1px solid rgba(255,255,255,0.08)',
+                    color: '#cbd5e1',
+                    borderRadius: '6px',
+                    padding: '4px 8px',
+                    fontSize: '0.75rem',
+                    cursor: 'pointer',
+                    outline: 'none'
+                  }}
+                  className="select-input"
+                >
+                  <option value="">Select Analyst...</option>
+                  {ANALYSTS.map(name => (
+                    <option key={name} value={name}>{name}</option>
+                  ))}
+                </select>
+              </div>
+
+              <button className="btn btn-primary" onClick={handleBulkResolve} style={{ padding: '6px 12px', fontSize: '0.75rem', gap: '6px' }}>
+                <CheckCircle size={14} /> Bulk Resolve
+              </button>
+
+              <button className="btn btn-outline" onClick={() => setSelectedIds(new Set())} style={{ padding: '6px 12px', fontSize: '0.75rem' }}>
+                Cancel
+              </button>
+            </div>
+          </div>
+        )}
+
         {/* Alerts Table */}
         <div className="glass-panel table-container">
           <table className="sec-table">
             <thead>
               <tr>
+                <th style={{ width: '40px', textAlign: 'center' }}>
+                  <input 
+                    type="checkbox" 
+                    checked={isAllSelected} 
+                    onChange={toggleSelectAll} 
+                    style={{ cursor: 'pointer', width: '15px', height: '15px' }} 
+                  />
+                </th>
                 <th>Severity</th>
                 <th>Time</th>
                 <th>Host</th>
                 <th>Alert Title</th>
                 <th>MITRE ID</th>
+                <th>Assignee</th>
                 <th>Status</th>
                 <th>Action</th>
               </tr>
@@ -147,6 +301,14 @@ export default function AlertsManager({ alerts, onRefresh }: AlertsManagerProps)
                   style={{ cursor: 'pointer', background: selectedAlertId === alert.id ? 'rgba(56, 189, 248, 0.05)' : '' }}
                   className={alert.status !== 'resolved' && (alert.severity === 'critical' || alert.severity === 'high') ? 'row-alerting' : ''}
                 >
+                  <td style={{ textAlign: 'center' }} onClick={(e) => e.stopPropagation()}>
+                    <input 
+                      type="checkbox" 
+                      checked={selectedIds.has(alert.id)} 
+                      onChange={(e) => toggleSelect(alert.id, e as any)} 
+                      style={{ cursor: 'pointer', width: '14px', height: '14px' }} 
+                    />
+                  </td>
                   <td>
                     <span className={`badge badge-${alert.severity}`}>
                       {alert.severity}
@@ -159,6 +321,29 @@ export default function AlertsManager({ alerts, onRefresh }: AlertsManagerProps)
                   <td style={{ fontWeight: 600, color: '#f1f5f9' }}>{alert.title}</td>
                   <td>
                     <code style={{ color: '#38bdf8' }}>{alert.mitreTechnique}</code>
+                  </td>
+                  <td onClick={(e) => e.stopPropagation()}>
+                    <select
+                      value={alert.assignee || ''}
+                      onChange={(e) => handleAssign(alert.id, e.target.value)}
+                      style={{
+                        background: 'rgba(255,255,255,0.03)',
+                        border: '1px solid rgba(255,255,255,0.08)',
+                        color: alert.assignee ? '#a78bfa' : '#64748b',
+                        fontWeight: alert.assignee ? 600 : 'normal',
+                        borderRadius: '6px',
+                        padding: '4px 6px',
+                        fontSize: '0.75rem',
+                        outline: 'none',
+                        cursor: 'pointer'
+                      }}
+                      className="select-input"
+                    >
+                      <option value="" style={{ color: '#64748b' }}>Unassigned</option>
+                      {ANALYSTS.map(name => (
+                        <option key={name} value={name} style={{ color: '#f1f5f9' }}>{name}</option>
+                      ))}
+                    </select>
                   </td>
                   <td>
                     <span className={`badge ${alert.status === 'resolved' ? 'badge-info' : alert.status === 'investigating' ? 'badge-medium' : 'badge-neutral'}`}>
@@ -182,7 +367,7 @@ export default function AlertsManager({ alerts, onRefresh }: AlertsManagerProps)
 
               {filteredAlerts.length === 0 && (
                 <tr>
-                  <td colSpan={7} style={{ textAlign: 'center', color: '#64748b', padding: '40px 0' }}>
+                  <td colSpan={9} style={{ textAlign: 'center', color: '#64748b', padding: '40px 0' }}>
                     No matching alerts found.
                   </td>
                 </tr>
@@ -213,6 +398,31 @@ export default function AlertsManager({ alerts, onRefresh }: AlertsManagerProps)
               <div><strong>Agent ID:</strong> {selectedAlert.agentId}</div>
               <div><strong>MITRE Tech:</strong> <code style={{ color: '#38bdf8' }}>{selectedAlert.mitreTechnique}</code></div>
               <div><strong>Category:</strong> {selectedAlert.category}</div>
+              <div style={{ gridColumn: 'span 2', display: 'flex', alignItems: 'center' }}>
+                <strong>Assignee:</strong>
+                <select
+                  value={selectedAlert.assignee || ''}
+                  onChange={(e) => handleAssign(selectedAlert.id, e.target.value)}
+                  style={{
+                    background: 'rgba(255,255,255,0.04)',
+                    border: '1px solid rgba(255,255,255,0.08)',
+                    color: selectedAlert.assignee ? '#a78bfa' : '#cbd5e1',
+                    fontWeight: selectedAlert.assignee ? 600 : 'normal',
+                    borderRadius: '6px',
+                    padding: '4px 8px',
+                    fontSize: '0.8rem',
+                    marginLeft: '8px',
+                    outline: 'none',
+                    cursor: 'pointer'
+                  }}
+                  className="select-input"
+                >
+                  <option value="">Unassigned</option>
+                  {ANALYSTS.map(name => (
+                    <option key={name} value={name}>{name}</option>
+                  ))}
+                </select>
+              </div>
             </div>
           </div>
 

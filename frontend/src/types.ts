@@ -24,6 +24,7 @@ export interface Alert {
   timestamp: string;
   rawLog: string;
   status: 'open' | 'investigating' | 'resolved';
+  assignee?: string;
 }
 
 export interface FIMEvent {
