@@ -26,7 +26,7 @@ export default function App() {
   useEffect(() => {
     // Clickjacking Frame-Busting defense (Client-side)
     if (window.self !== window.top) {
-      window.top!.location = window.self.location;
+      window.top!.location.href = window.self.location.href;
     }
 
     const verify = async () => {

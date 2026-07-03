@@ -51,9 +51,7 @@ var (
 // Helper: Generate secure 100% random SHA-256 token
 func generateSecureSHA256Token() string {
 	b := make([]byte, 32)
-	if _, err := rand.Read(b); err != nil {
-		return "ae915f00e980ff63945ca34a16dfb776495ceabff932f91dfeb83c812d3080ff" // secure fallback
-	}
+	rand.Read(b)
 	hash := sha256.Sum256(b)
 	return hex.EncodeToString(hash[:])
 }
@@ -61,9 +59,7 @@ func generateSecureSHA256Token() string {
 // Helper: Generate secure random session token
 func generateSessionToken() string {
 	b := make([]byte, 24)
-	if _, err := rand.Read(b); err != nil {
-		return ""
-	}
+	rand.Read(b)
 	return hex.EncodeToString(b)
 }
 
