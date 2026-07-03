@@ -6,12 +6,13 @@ import (
 	"strings"
 
 	"dashboard/backend/handlers"
+	"dashboard/backend/store"
 )
 
 func corsMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		// Allow any origin during development, or specifically localhost:5173
-		w.Header().Set("Access-Control-Allow-Origin", "*")
+		w.Header().Set("Access-Control-Allow-Origin", "http://localhost:5173")
+		w.Header().Set("Access-Control-Allow-Credentials", "true")
 		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
 		w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization")
 
@@ -25,7 +26,16 @@ func corsMiddleware(next http.Handler) http.Handler {
 }
 
 func main() {
+	// Initialize Database (PostgreSQL with In-Memory fallback)
+	store.InitDB()
+
 	mux := http.NewServeMux()
+
+	// Auth Routes
+	mux.HandleFunc("/api/auth/request-token", handlers.RequestToken)
+	mux.HandleFunc("/api/auth/login", handlers.Login)
+	mux.HandleFunc("/api/auth/logout", handlers.Logout)
+	mux.HandleFunc("/api/auth/check", handlers.CheckAuth)
 
 	// API Routes
 	mux.HandleFunc("/api/summary", handlers.GetSummary)
@@ -33,11 +43,11 @@ func main() {
 	mux.HandleFunc("/api/agents/", handlers.GetAgentDetail) // Handles /api/agents/:id
 	mux.HandleFunc("/api/alerts", handlers.GetAlerts)
 	mux.HandleFunc("/api/alerts/", func(w http.ResponseWriter, r *http.Request) {
-		// Route helper for nested alert calls: /api/alerts/:id and /api/alerts/:id/analyze
 		if r.Method == http.MethodOptions {
-			w.Header().Set("Access-Control-Allow-Origin", "*")
+			w.Header().Set("Access-Control-Allow-Origin", "http://localhost:5173")
+			w.Header().Set("Access-Control-Allow-Credentials", "true")
 			w.Header().Set("Access-Control-Allow-Methods", "POST, GET, PUT, OPTIONS")
-			w.Header().Set("Access-Control-Allow-Headers", "Content-Type")
+			w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization")
 			w.WriteHeader(http.StatusOK)
 			return
 		}
@@ -58,9 +68,10 @@ func main() {
 	mux.HandleFunc("/api/simulate", handlers.TriggerSimulation)
 	mux.HandleFunc("/api/actions", func(w http.ResponseWriter, r *http.Request) {
 		if r.Method == http.MethodOptions {
-			w.Header().Set("Access-Control-Allow-Origin", "*")
+			w.Header().Set("Access-Control-Allow-Origin", "http://localhost:5173")
+			w.Header().Set("Access-Control-Allow-Credentials", "true")
 			w.Header().Set("Access-Control-Allow-Methods", "POST, GET, OPTIONS")
-			w.Header().Set("Access-Control-Allow-Headers", "Content-Type")
+			w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization")
 			w.WriteHeader(http.StatusOK)
 			return
 		}
@@ -71,8 +82,8 @@ func main() {
 		}
 	})
 
-	// Wrap mux with CORS middleware
-	handler := corsMiddleware(mux)
+	// Wrap mux with Auth middleware, then CORS middleware
+	handler := corsMiddleware(handlers.AuthMiddleware(mux))
 
 	log.Println("==================================================")
 	log.Println("  Aegis Security Operations Center (SOC) API")

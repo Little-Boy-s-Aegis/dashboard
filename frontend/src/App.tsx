@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { Shield, AlertTriangle, Monitor, FileText, Terminal, Activity, Clock, Zap } from 'lucide-react';
+import { Shield, AlertTriangle, Monitor, FileText, Terminal, Activity, Clock, Zap, LogOut, User, RefreshCw } from 'lucide-react';
 import type { Agent, Alert, FIMEvent, DashboardSummary, ActionLog } from './types';
 import DashboardOverview from './components/DashboardOverview';
 import AlertsManager from './components/AlertsManager';
@@ -7,8 +7,11 @@ import AgentManager from './components/AgentManager';
 import FimDashboard from './components/FimDashboard';
 import LogExplorer from './components/LogExplorer';
 import ResponseCenter from './components/ResponseCenter';
+import Login from './components/Login';
 
 export default function App() {
+  const [isAuthenticated, setIsAuthenticated] = useState<boolean | null>(null);
+  const [user, setUser] = useState<string>('');
   const [activeTab, setActiveTab] = useState<string>(() => localStorage.getItem('activeTab') || 'overview');
   const [timeRange, setTimeRange] = useState<string>(() => localStorage.getItem('timeRange') || '24h');
   const [summary, setSummary] = useState<DashboardSummary | null>(null);
@@ -18,6 +21,32 @@ export default function App() {
   const [actions, setActions] = useState<ActionLog[]>([]);
   const [alertsFilterMitreId, setAlertsFilterMitreId] = useState<string | null>(null);
   const [currentTime, setCurrentTime] = useState(new Date());
+
+  // Check auth state on mount
+  useEffect(() => {
+    // Clickjacking Frame-Busting defense (Client-side)
+    if (window.self !== window.top) {
+      window.top!.location = window.self.location;
+    }
+
+    const verify = async () => {
+      try {
+        const res = await fetch('/api/auth/check');
+        if (res.ok) {
+          const data = await res.json();
+          setIsAuthenticated(data.isAuthenticated);
+          if (data.isAuthenticated) {
+            setUser(data.username);
+          }
+        } else {
+          setIsAuthenticated(false);
+        }
+      } catch {
+        setIsAuthenticated(false);
+      }
+    };
+    verify();
+  }, []);
 
   useEffect(() => {
     localStorage.setItem('activeTab', activeTab);
@@ -33,10 +62,20 @@ export default function App() {
   }, []);
 
   const refreshAllData = async () => {
+    if (isAuthenticated !== true) return;
     try {
       const [summaryRes, alertsRes, agentsRes, fimRes, actionsRes] = await Promise.allSettled([
         fetch('/api/summary'), fetch('/api/alerts'), fetch('/api/agents'), fetch('/api/fim'), fetch('/api/actions')
       ]);
+
+      const hasUnauthorized = [summaryRes, alertsRes, agentsRes, fimRes, actionsRes].some(
+        res => res.status === 'fulfilled' && res.value.status === 401
+      );
+      if (hasUnauthorized) {
+        setIsAuthenticated(false);
+        return;
+      }
+
       if (summaryRes.status === 'fulfilled' && summaryRes.value.ok) setSummary(await summaryRes.value.json());
       if (alertsRes.status === 'fulfilled' && alertsRes.value.ok) setAlerts(await alertsRes.value.json());
       if (agentsRes.status === 'fulfilled' && agentsRes.value.ok) setAgents(await agentsRes.value.json());
@@ -46,10 +85,22 @@ export default function App() {
   };
 
   useEffect(() => {
-    refreshAllData();
-    const interval = setInterval(refreshAllData, 3000);
-    return () => clearInterval(interval);
-  }, []);
+    if (isAuthenticated === true) {
+      refreshAllData();
+      const interval = setInterval(refreshAllData, 3000);
+      return () => clearInterval(interval);
+    }
+  }, [isAuthenticated]);
+
+  const handleLogout = async () => {
+    try {
+      await fetch('/api/auth/logout', { method: 'POST' });
+    } catch (e) {
+      console.error('Logout failed:', e);
+    }
+    setIsAuthenticated(false);
+    setUser('');
+  };
 
   const renderActiveView = () => {
     switch (activeTab) {
@@ -63,7 +114,8 @@ export default function App() {
           initialMitreFilter={alertsFilterMitreId} onClearMitreFilter={() => setAlertsFilterMitreId(null)} />;
       case 'actions':
         return <ResponseCenter agents={agents} alerts={alerts} actions={actions}
-          timeRange={timeRange} setTimeRange={setTimeRange} onRefresh={refreshAllData} />;
+          timeRange={timeRange} setTimeRange={setTimeRange} onRefresh={refreshAllData}
+          currentUser={user} />;
       case 'agents':
         return <AgentManager agents={agents} />;
       case 'fim':
@@ -87,15 +139,31 @@ export default function App() {
     { key: 'logs', icon: Terminal, label: 'Logs' },
   ];
 
+  if (isAuthenticated === null) {
+    return (
+      <div style={{ display: 'flex', flexDirection: 'column', justifyContent: 'center', alignItems: 'center', minHeight: '100vh', background: 'var(--bg-canvas)' }}>
+        <RefreshCw size={24} className="spin" style={{ color: 'var(--accent)', marginBottom: 12 }} />
+        <span style={{ fontSize: '0.78rem', color: 'var(--text-3)', fontFamily: "'IBM Plex Mono', monospace" }}>VERIFYING SECURITY CONTEXT...</span>
+      </div>
+    );
+  }
+
+  if (isAuthenticated === false) {
+    return <Login onLoginSuccess={(username) => {
+      setIsAuthenticated(true);
+      setUser(username);
+    }} />;
+  }
+
   return (
     <div className="app-container">
-      <aside className="sidebar">
+      <aside className="sidebar" style={{ display: 'flex', flexDirection: 'column' }}>
         <div className="logo-container">
           <Shield size={18} className="logo-icon" style={{ color: 'var(--accent)' }} />
           <span className="logo-text" style={{ letterSpacing: '0.05em' }}>AEGIS</span>
         </div>
 
-        <nav className="nav-links">
+        <nav className="nav-links" style={{ flex: 1 }}>
           {navItems.map(item => (
             <div key={item.key}
               className={`nav-item ${activeTab === item.key ? 'active' : ''}`}
@@ -118,6 +186,12 @@ export default function App() {
               )}
             </div>
           ))}
+          
+          {/* Sidebar Log Out Button */}
+          <div className="nav-item" onClick={handleLogout} style={{ marginTop: 24, borderTop: '1px solid var(--border-0)', paddingTop: 14 }}>
+            <LogOut size={15} style={{ color: 'var(--critical-dim)' }} />
+            <span style={{ color: 'var(--critical-dim)' }}>Log Out</span>
+          </div>
         </nav>
 
         <div className="sidebar-footer">
@@ -151,7 +225,10 @@ export default function App() {
           display: 'flex', justifyContent: 'space-between', alignItems: 'center',
           borderBottom: '1px solid var(--border-1)', paddingBottom: 8, marginBottom: 16
         }}>
-          <span style={{ fontSize: '0.8rem', fontWeight: 600, color: 'var(--text-2)' }}>Aegis SOC Workspace</span>
+          <span style={{ fontSize: '0.8rem', fontWeight: 600, color: 'var(--text-2)', display: 'flex', alignItems: 'center', gap: 6 }}>
+            <User size={12} style={{ color: 'var(--accent)' }} />
+            Aegis SOC Workspace <span style={{ color: 'var(--text-3)', fontWeight: 400 }}>({user})</span>
+          </span>
           <span style={{ fontSize: '0.72rem', color: 'var(--accent)', fontWeight: 600, display: 'flex', alignItems: 'center', gap: 4 }}>
             <span style={{ width: 6, height: 6, background: 'var(--accent)', borderRadius: '50%' }} /> Live Stream Active
           </span>
