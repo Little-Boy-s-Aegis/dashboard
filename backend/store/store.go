@@ -43,11 +43,11 @@ func (db *Database) seed() {
 
 	// Seed 5 agents
 	agentsData := []models.Agent{
-		{ID: "agent-01", Name: "Web-Prod-01", IP: "192.168.10.11", OS: "Ubuntu 22.04 LTS", Status: "active", CPUUsage: 24.5, RAMUsage: 62.1, DiskUsage: 78.2},
-		{ID: "agent-02", Name: "DB-Replica-01", IP: "192.168.10.12", OS: "RedHat Enterprise Linux 9", Status: "active", CPUUsage: 12.8, RAMUsage: 45.4, DiskUsage: 55.1},
-		{ID: "agent-03", Name: "AD-Controller-01", IP: "192.168.10.20", OS: "Windows Server 2022", Status: "active", CPUUsage: 8.4, RAMUsage: 35.8, DiskUsage: 42.9},
-		{ID: "agent-04", Name: "K8s-Worker-Node-A", IP: "10.0.12.100", OS: "Ubuntu 20.04 LTS", Status: "active", CPUUsage: 55.2, RAMUsage: 81.3, DiskUsage: 66.8},
-		{ID: "agent-05", Name: "Jumpbox-SSH", IP: "192.168.10.5", OS: "Debian 12", Status: "active", CPUUsage: 1.5, RAMUsage: 18.2, DiskUsage: 29.4},
+		{ID: "agent-01", Name: "Web-Prod-01", IP: "192.168.10.11", OS: "Ubuntu 22.04 LTS", Status: "active", CPUUsage: 24.5, RAMUsage: 62.1, DiskUsage: 78.2, NetworkIn: 8.5, NetworkOut: 4.2},
+		{ID: "agent-02", Name: "DB-Replica-01", IP: "192.168.10.12", OS: "RedHat Enterprise Linux 9", Status: "active", CPUUsage: 12.8, RAMUsage: 45.4, DiskUsage: 55.1, NetworkIn: 15.1, NetworkOut: 8.4},
+		{ID: "agent-03", Name: "AD-Controller-01", IP: "192.168.10.20", OS: "Windows Server 2022", Status: "active", CPUUsage: 8.4, RAMUsage: 35.8, DiskUsage: 42.9, NetworkIn: 5.2, NetworkOut: 2.1},
+		{ID: "agent-04", Name: "K8s-Worker-Node-A", IP: "10.0.12.100", OS: "Ubuntu 20.04 LTS", Status: "active", CPUUsage: 55.2, RAMUsage: 81.3, DiskUsage: 66.8, NetworkIn: 12.4, NetworkOut: 11.2},
+		{ID: "agent-05", Name: "Jumpbox-SSH", IP: "192.168.10.5", OS: "Debian 12", Status: "active", CPUUsage: 1.5, RAMUsage: 18.2, DiskUsage: 29.4, NetworkIn: 1.8, NetworkOut: 0.9},
 	}
 
 	for i := range agentsData {
@@ -229,6 +229,7 @@ func (db *Database) startSimulator() {
 					agent.LastSeen = time.Now()
 				}
 			}
+			db.updateAgentThreatsAndNetwork()
 			db.Mu.Unlock()
 
 		case <-logTicker.C:
@@ -578,4 +579,45 @@ func (db *Database) SimulateAttack(agentID string, attackType string) string {
 	}
 
 	return ""
+}
+
+// Helper to calculate agent threat score and network throughput
+func (db *Database) updateAgentThreatsAndNetwork() {
+	// For each agent, calculate threat score based on its unresolved alerts
+	for _, agent := range db.Agents {
+		score := 0
+		for _, alt := range db.Alerts {
+			if alt.AgentID == agent.ID && alt.Status != "resolved" {
+				switch alt.Severity {
+				case "critical":
+					score += 50
+				case "high":
+					score += 30
+				case "medium":
+					score += 15
+				case "low":
+					score += 5
+				}
+			}
+		}
+		if score > 100 {
+			score = 100
+		}
+		agent.ThreatScore = score
+
+		// Fluctuate network throughput based on threat level
+		if score >= 70 {
+			// Severe threat: Data exfiltration / flood simulation!
+			agent.NetworkOut = clamp(agent.NetworkOut+rand.Float64()*100-50, 450.0, 980.0)
+			agent.NetworkIn = clamp(agent.NetworkIn+rand.Float64()*10-5, 30.0, 80.0)
+		} else if score >= 30 {
+			// Elevated threat: suspicious traffic
+			agent.NetworkOut = clamp(agent.NetworkOut+rand.Float64()*20-10, 80.0, 180.0)
+			agent.NetworkIn = clamp(agent.NetworkIn+rand.Float64()*15-7, 40.0, 95.0)
+		} else {
+			// Normal background traffic
+			agent.NetworkOut = clamp(agent.NetworkOut+rand.Float64()*2-1, 1.5, 12.0)
+			agent.NetworkIn = clamp(agent.NetworkIn+rand.Float64()*4-2, 2.0, 25.0)
+		}
+	}
 }
