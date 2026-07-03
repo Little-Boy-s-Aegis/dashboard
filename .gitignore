@@ -1,0 +1,27 @@
+# Node dependencies & builds
+node_modules/
+dist/
+.npm/
+npm-debug.log*
+
+# Playwright screenshots and test reports
+.playwright-mcp/
+playwright-report/
+test-results/
+
+# Go compiled binaries and tests
+backend/main
+backend/main.exe
+*.exe
+*.test
+*.prof
+
+# OS & IDE directories
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
