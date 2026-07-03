@@ -3,6 +3,7 @@ package handlers
 import (
 	"encoding/json"
 	"fmt"
+	"log"
 	"net/http"
 	"strings"
 	"time"
@@ -664,6 +665,31 @@ func BulkAssignAlerts(w http.ResponseWriter, r *http.Request) {
 
 // GET /api/actions
 func GetActions(w http.ResponseWriter, r *http.Request) {
+	if store.UsePostgres {
+		rows, err := store.SQL.Query("SELECT id, timestamp, actor, action_type, target, status, message FROM action_logs ORDER BY timestamp DESC")
+		if err != nil {
+			log.Printf("[DATABASE ERROR] Failed to fetch action logs from PostgreSQL: %v", err)
+			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "Database read error"})
+			return
+		}
+		defer rows.Close()
+
+		actionsList := make([]*models.ActionLog, 0)
+		for rows.Next() {
+			var act models.ActionLog
+			var ts time.Time
+			err := rows.Scan(&act.ID, &ts, &act.Actor, &act.ActionType, &act.Target, &act.Status, &act.Message)
+			if err != nil {
+				log.Printf("[DATABASE ERROR] Scan action log row failed: %v", err)
+				continue
+			}
+			act.Timestamp = ts
+			actionsList = append(actionsList, &act)
+		}
+		writeJSON(w, http.StatusOK, actionsList)
+		return
+	}
+
 	store.DB.Mu.RLock()
 	defer store.DB.Mu.RUnlock()
 
@@ -697,9 +723,53 @@ func PerformAction(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if req.Actor == "" || req.ActionType == "" || req.Target == "" {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "actor, actionType, and target are required"})
+	if req.ActionType == "" || req.Target == "" {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "actionType and target are required"})
 		return
+	}
+
+	// Resolve the actual operator from cookie/bearer token to prevent spoofing
+	cookie, err := r.Cookie("session_token")
+	var sessionToken string
+	if err == nil {
+		sessionToken = cookie.Value
+	} else {
+		authHeader := r.Header.Get("Authorization")
+		if strings.HasPrefix(authHeader, "Bearer ") {
+			sessionToken = strings.TrimPrefix(authHeader, "Bearer ")
+		}
+	}
+
+	var sessionUsername string
+	var sessionExists bool
+
+	if sessionToken != "" {
+		if store.UsePostgres {
+			_, dbUsername, _, dbExpiresAt, dbErr := store.GetSQLSession(sessionToken)
+			if dbErr == nil && time.Now().Before(dbExpiresAt) {
+				sessionUsername = dbUsername
+				sessionExists = true
+			}
+		} else {
+			authMu.RLock()
+			session, ok := sessionStore[sessionToken]
+			if ok && time.Now().Before(session.ExpiresAt) {
+				sessionUsername = session.Username
+				sessionExists = true
+			}
+			authMu.RUnlock()
+		}
+	}
+
+	var resolvedActor string
+	if sessionExists {
+		resolvedActor = fmt.Sprintf("SOC (%s)", sessionUsername)
+	} else {
+		// Fallback for AI/Simulators (non-human background actions)
+		resolvedActor = req.Actor
+		if resolvedActor == "" {
+			resolvedActor = "System"
+		}
 	}
 
 	store.DB.Mu.Lock()
@@ -716,7 +786,6 @@ func PerformAction(w http.ResponseWriter, r *http.Request) {
 
 	// Apply side effects to simulation targets
 	if req.ActionType == "Isolate Host" {
-		// Find agent and set to isolated/disconnected status
 		for _, a := range store.DB.Agents {
 			if a.Name == req.Target || a.ID == req.Target {
 				a.Status = "disconnected"
@@ -735,11 +804,22 @@ func PerformAction(w http.ResponseWriter, r *http.Request) {
 	actionLog := &models.ActionLog{
 		ID:         actionID,
 		Timestamp:  time.Now(),
-		Actor:      req.Actor,
+		Actor:      resolvedActor,
 		ActionType: req.ActionType,
 		Target:     req.Target,
 		Status:     status,
 		Message:    detailMsg,
+	}
+
+	// Save to DB or in-memory
+	if store.UsePostgres {
+		_, dbErr := store.SQL.Exec(`
+			INSERT INTO action_logs (id, timestamp, actor, action_type, target, status, message)
+			VALUES ($1, $2, $3, $4, $5, $6, $7)
+		`, actionID, actionLog.Timestamp, actionLog.Actor, actionLog.ActionType, actionLog.Target, actionLog.Status, actionLog.Message)
+		if dbErr != nil {
+			log.Printf("[DATABASE ERROR] Failed to save action log to PostgreSQL: %v", dbErr)
+		}
 	}
 
 	store.DB.ActionLogs = append(store.DB.ActionLogs, actionLog)

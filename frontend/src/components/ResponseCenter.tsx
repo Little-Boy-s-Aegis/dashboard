@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { Send, ShieldAlert, Cpu, CheckCircle, XCircle, RefreshCw, Zap } from 'lucide-react';
 import type { Agent, ActionLog, Alert } from '../types';
 
@@ -9,19 +9,25 @@ interface Props {
   timeRange: string;
   setTimeRange: (val: string) => void;
   onRefresh: () => void;
+  currentUser?: string;
 }
 
-const ACTORS = ['SOC (Sarah Connor)', 'SOC (Alex Miller)', 'SOC (John Doe)'];
 const ACTION_TYPES = ['Isolate Host', 'Block IP', 'Terminate Process', 'Revoke Credentials'];
 
-export default function ResponseCenter({ agents, alerts, actions, timeRange, setTimeRange, onRefresh }: Props) {
-  const [actor, setActor] = useState(ACTORS[0]);
+export default function ResponseCenter({ agents, alerts, actions, timeRange, setTimeRange, onRefresh, currentUser }: Props) {
+  const [actor, setActor] = useState(currentUser ? `SOC (${currentUser})` : 'SOC (Sarah Connor)');
   const [actionType, setActionType] = useState(ACTION_TYPES[0]);
   const [target, setTarget] = useState('');
   const [message, setMessage] = useState('');
   const [submitting, setSubmitting] = useState(false);
   const [errorMsg, setErrorMsg] = useState('');
   const [successMsg, setSuccessMsg] = useState('');
+
+  useEffect(() => {
+    if (currentUser) {
+      setActor(`SOC (${currentUser})`);
+    }
+  }, [currentUser]);
 
   // Filter alerts by time window
   const filterByTimeRange = (alertTimestamp: string) => {
@@ -208,9 +214,14 @@ export default function ResponseCenter({ agents, alerts, actions, timeRange, set
             <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
               <div style={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
                 <label style={{ fontSize: '0.66rem', color: 'var(--text-3)', fontWeight: 600, textTransform: 'uppercase' }}>Operator (Analyst)</label>
-                <select className="select-input" value={actor} onChange={e => setActor(e.target.value)}>
-                  {ACTORS.map(a => <option key={a} value={a}>{a}</option>)}
-                </select>
+                <div className="search-input" style={{
+                  display: 'flex', alignItems: 'center', height: 36, fontSize: '0.82rem',
+                  color: 'var(--accent)', fontWeight: 600, background: 'rgba(0,0,0,0.15)',
+                  paddingLeft: 10, cursor: 'not-allowed', borderRadius: 'var(--r-xs)',
+                  border: '1px solid var(--border-1)', userSelect: 'none'
+                }}>
+                  {actor}
+                </div>
               </div>
 
               <div style={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
@@ -230,7 +241,15 @@ export default function ResponseCenter({ agents, alerts, actions, timeRange, set
                     {agents.map(a => <option key={a.id} value={a.name}>{a.name}</option>)}
                   </select>
                 ) : (
-                  <input type="text" className="search-input" value={target} onChange={e => setTarget(e.target.value)} 
+                  <input type="text" className="search-input" value={target} 
+                    onChange={e => {
+                      const val = e.target.value;
+                      if (actionType === 'Block IP') {
+                        setTarget(val.replace(/[^0-9.]/g, '').slice(0, 15));
+                      } else {
+                        setTarget(val.replace(/[^a-zA-Z0-9_.-]/g, '').slice(0, 50));
+                      }
+                    }}
                     placeholder={
                       actionType === 'Block IP' ? 'e.g. 198.51.100.222' : 
                       actionType === 'Terminate Process' ? 'e.g. svchost_cipher.exe' : 'e.g. Administrator'
@@ -241,7 +260,8 @@ export default function ResponseCenter({ agents, alerts, actions, timeRange, set
 
               <div style={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
                 <label style={{ fontSize: '0.66rem', color: 'var(--text-3)', fontWeight: 600, textTransform: 'uppercase' }}>Mitigation Message</label>
-                <input type="text" className="search-input" value={message} onChange={e => setMessage(e.target.value)}
+                <input type="text" className="search-input" value={message} 
+                  onChange={e => setMessage(e.target.value.replace(/[<>&"']/g, '').slice(0, 100))}
                   placeholder="Optional comment/reason..." />
               </div>
             </div>

@@ -94,3 +94,33 @@ type ActionLog struct {
 	Message    string    `json:"message"`    // Details of the action result
 }
 
+type AuthRequest struct {
+	UID string `json:"uid"`
+}
+
+type AuthResponse struct {
+	UID      string    `json:"uid"`
+	Username string    `json:"username"`
+	Token    string    `json:"token"`
+	Expiry   time.Time `json:"expiry"`
+}
+
+type LoginRequest struct {
+	UID   string `json:"uid"`
+	Token string `json:"token"`
+}
+
+type LoginResponse struct {
+	UID          string    `json:"uid"`
+	Username     string    `json:"username"`
+	SessionToken string    `json:"sessionToken"`
+	ExpiresAt    time.Time `json:"expiresAt"`
+}
+
+type AuthStatus struct {
+	IsAuthenticated bool      `json:"isAuthenticated"`
+	Username        string    `json:"username"`
+	UID             string    `json:"uid,omitempty"`
+	ExpiresAt       time.Time `json:"expiresAt,omitempty"`
+}
+
