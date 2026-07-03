@@ -12,6 +12,9 @@ type Agent struct {
 	CPUUsage  float64   `json:"cpuUsage"`
 	RAMUsage  float64   `json:"ramUsage"`
 	DiskUsage float64   `json:"diskUsage"`
+	NetworkIn   float64   `json:"networkIn"`
+	NetworkOut  float64   `json:"networkOut"`
+	ThreatScore int       `json:"threatScore"`
 }
 
 type Alert struct {

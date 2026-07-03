@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { Server, Cpu, HardDrive, ShieldAlert, CheckCircle2, ChevronRight, Terminal, RefreshCw } from 'lucide-react';
+import { Server, Cpu, HardDrive, ShieldAlert, CheckCircle2, ChevronRight, Terminal, RefreshCw, Activity } from 'lucide-react';
 import type { Agent, Alert, FIMEvent } from '../types';
 
 interface AgentManagerProps {
@@ -34,7 +34,7 @@ export default function AgentManager({ agents }: AgentManagerProps) {
     } else {
       setAgentDetail(null);
     }
-  }, [selectedAgentId, agents]); // Reload detail if agents list updates (e.g. CPU spikes)
+  }, [selectedAgentId, agents]); // Reload detail if agents list updates
 
   const copyCommand = (cmd: string, id: string) => {
     navigator.clipboard.writeText(cmd);
@@ -59,6 +59,12 @@ export default function AgentManager({ agents }: AgentManagerProps) {
     return '#10b981'; // Green
   };
 
+  const getThreatScoreColor = (score: number) => {
+    if (score >= 70) return '#f43f5e'; // Red
+    if (score >= 40) return '#f97316'; // Orange
+    return '#10b981'; // Green
+  };
+
   const linuxInstallCmd = `curl -so wazuh-agent.deb https://packages.wazuh.com/4.x/apt/pool/main/w/wazuh-agent/wazuh-agent_4.5.3-1_amd64.deb && WAZUH_MANAGER="192.168.10.250" dpkg -i wazuh-agent.deb && systemctl daemon-reload && systemctl enable wazuh-agent && systemctl start wazuh-agent`;
   
   const winInstallCmd = `Invoke-WebRequest -Uri "https://packages.wazuh.com/4.x/windows/wazuh-agent-4.5.3-1.msi" -OutFile "wazuh-agent.msi"; Start-Process msiexec.exe -ArgumentList '/i wazuh-agent.msi /q WAZUH_MANAGER="192.168.10.250"' -Wait; Start-Service -Name "Wazuh"`;
@@ -71,7 +77,7 @@ export default function AgentManager({ agents }: AgentManagerProps) {
         <div className="page-header" style={{ marginBottom: '16px' }}>
           <div>
             <h1 className="page-title">Agent Host Monitor</h1>
-            <p className="page-subtitle">Inspect endpoints, operational health, and active processes</p>
+            <p className="page-subtitle">Inspect endpoints, network throughput, and threat vulnerability scores</p>
           </div>
         </div>
 
@@ -103,17 +109,21 @@ export default function AgentManager({ agents }: AgentManagerProps) {
                 </div>
                 <div>
                   <h3 style={{ fontSize: '0.95rem' }}>{agent.name}</h3>
-                  <div style={{ display: 'flex', gap: '8px', fontSize: '0.75rem', color: '#94a3b8', marginTop: '4px' }}>
+                  <div style={{ display: 'flex', gap: '8px', fontSize: '0.75rem', color: '#94a3b8', marginTop: '4px', alignItems: 'center' }}>
                     <span>{agent.ip}</span>
                     <span>•</span>
                     <span>{agent.os}</span>
+                    <span>•</span>
+                    <span style={{ color: '#cbd5e1', display: 'flex', alignItems: 'center', gap: '3px' }}>
+                      <Activity size={10} /> ↓{agent.networkIn.toFixed(1)} / ↑{agent.networkOut.toFixed(1)} Mbps
+                    </span>
                   </div>
                 </div>
               </div>
 
-              <div style={{ display: 'flex', gap: '16px', alignItems: 'center' }}>
-                {/* Micro usage charts */}
-                <div style={{ display: 'flex', flexDirection: 'column', gap: '4px', fontSize: '0.7rem', width: '80px', color: '#94a3b8' }}>
+              <div style={{ display: 'flex', gap: '20px', alignItems: 'center' }}>
+                {/* CPU usage */}
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '4px', fontSize: '0.7rem', width: '65px', color: '#94a3b8' }}>
                   <div style={{ display: 'flex', justifyContent: 'space-between' }}>
                     <span>CPU</span>
                     <span style={{ fontWeight: 600 }}>{agent.cpuUsage.toFixed(0)}%</span>
@@ -123,7 +133,8 @@ export default function AgentManager({ agents }: AgentManagerProps) {
                   </div>
                 </div>
                 
-                <div style={{ display: 'flex', flexDirection: 'column', gap: '4px', fontSize: '0.7rem', width: '80px', color: '#94a3b8' }}>
+                {/* RAM usage */}
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '4px', fontSize: '0.7rem', width: '65px', color: '#94a3b8' }}>
                   <div style={{ display: 'flex', justifyContent: 'space-between' }}>
                     <span>RAM</span>
                     <span style={{ fontWeight: 600 }}>{agent.ramUsage.toFixed(0)}%</span>
@@ -131,6 +142,19 @@ export default function AgentManager({ agents }: AgentManagerProps) {
                   <div style={{ width: '100%', height: '4px', background: 'rgba(255,255,255,0.08)', borderRadius: '2px', overflow: 'hidden' }}>
                     <div style={{ width: `${agent.ramUsage}%`, height: '100%', background: getProgressBarColor(agent.ramUsage) }} />
                   </div>
+                </div>
+
+                {/* Threat Score Badge */}
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '2px', alignItems: 'center', width: '75px' }}>
+                  <span style={{ fontSize: '0.6rem', color: '#64748b', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Threat Score</span>
+                  <span style={{
+                    fontSize: '0.9rem',
+                    fontWeight: 800,
+                    color: getThreatScoreColor(agent.threatScore),
+                    textShadow: agent.threatScore > 0 ? `0 0 6px ${getThreatScoreColor(agent.threatScore)}` : 'none'
+                  }}>
+                    {agent.threatScore}/100
+                  </span>
                 </div>
 
                 <ChevronRight size={16} style={{ color: '#64748b' }} />
@@ -167,7 +191,7 @@ export default function AgentManager({ agents }: AgentManagerProps) {
                 </button>
               </div>
 
-              {/* Resource Grid */}
+              {/* Resource grid - Row 1 (CPU, RAM, Disk) */}
               <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '12px' }}>
                 <div style={{ padding: '12px', background: 'rgba(255,255,255,0.02)', borderRadius: '8px', border: '1px solid rgba(255,255,255,0.03)' }}>
                   <div style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '0.75rem', color: '#94a3b8', marginBottom: '8px' }}>
@@ -200,8 +224,69 @@ export default function AgentManager({ agents }: AgentManagerProps) {
                 </div>
               </div>
 
+              {/* Resource grid - Row 2 (Network I/O & Threat Score) */}
+              <div style={{ display: 'grid', gridTemplateColumns: '1.8fr 1fr', gap: '12px' }}>
+                {/* Network I/O card */}
+                <div style={{ padding: '12px', background: 'rgba(255,255,255,0.02)', borderRadius: '8px', border: '1px solid rgba(255,255,255,0.03)' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '0.75rem', color: '#94a3b8', marginBottom: '8px' }}>
+                    <Activity size={14} style={{ color: '#38bdf8' }} /> NETWORK THROUGHPUT (I/O)
+                  </div>
+                  <div style={{ display: 'flex', justifyContent: 'space-around', alignItems: 'center', marginTop: '12px' }}>
+                    <div>
+                      <span style={{ fontSize: '0.65rem', color: '#64748b', display: 'block', marginBottom: '2px' }}>INCOMING (DOWNLOAD)</span>
+                      <span style={{ fontSize: '1.25rem', fontWeight: 800, color: '#34d399' }}>
+                        ↓ {agentDetail.agent.networkIn.toFixed(1)} <span style={{ fontSize: '0.8rem', fontWeight: 500 }}>Mbps</span>
+                      </span>
+                    </div>
+                    <div style={{ height: '30px', width: '1px', background: 'rgba(255,255,255,0.08)' }} />
+                    <div>
+                      <span style={{ fontSize: '0.65rem', color: '#64748b', display: 'block', marginBottom: '2px' }}>OUTGOING (UPLOAD / EXFILTRATION)</span>
+                      <span style={{ fontSize: '1.25rem', fontWeight: 800, color: agentDetail.agent.threatScore >= 70 ? '#f43f5e' : '#fb923c' }}>
+                        ↑ {agentDetail.agent.networkOut.toFixed(1)} <span style={{ fontSize: '0.8rem', fontWeight: 500 }}>Mbps</span>
+                      </span>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Threat Score card */}
+                <div style={{
+                  padding: '12px',
+                  background: 'rgba(255,255,255,0.02)',
+                  borderRadius: '8px',
+                  border: agentDetail.agent.threatScore >= 70 ? '1px solid rgba(244, 63, 94, 0.25)' : '1px solid rgba(255,255,255,0.03)'
+                }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '0.75rem', color: '#94a3b8', marginBottom: '8px' }}>
+                    <ShieldAlert size={14} style={{ color: getThreatScoreColor(agentDetail.agent.threatScore) }} /> THREAT SCORE
+                  </div>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline' }}>
+                    <div style={{
+                      fontSize: '1.4rem',
+                      fontWeight: 800,
+                      color: getThreatScoreColor(agentDetail.agent.threatScore),
+                      textShadow: agentDetail.agent.threatScore > 0 ? `0 0 8px ${getThreatScoreColor(agentDetail.agent.threatScore)}` : 'none'
+                    }}>
+                      {agentDetail.agent.threatScore} <span style={{ fontSize: '0.8rem', fontWeight: 500, color: '#64748b' }}>/ 100</span>
+                    </div>
+                    <span style={{
+                      fontSize: '0.7rem',
+                      fontWeight: 700,
+                      color: getThreatScoreColor(agentDetail.agent.threatScore)
+                    }}>
+                      {agentDetail.agent.threatScore >= 70 ? 'SEVERE' : agentDetail.agent.threatScore >= 40 ? 'SUSPICIOUS' : 'SECURE'}
+                    </span>
+                  </div>
+                  <div style={{ width: '100%', height: '4px', background: 'rgba(255,255,255,0.08)', borderRadius: '2px', overflow: 'hidden', marginTop: '10px' }}>
+                    <div style={{
+                      width: `${agentDetail.agent.threatScore || 4}%`,
+                      height: '100%',
+                      background: getThreatScoreColor(agentDetail.agent.threatScore)
+                    }} />
+                  </div>
+                </div>
+              </div>
+
               {/* Navigation Tabs */}
-              <div style={{ display: 'flex', borderBottom: '1px solid hsl(var(--border-muted))', gap: '16px' }}>
+              <div style={{ display: 'flex', borderBottom: '1px solid hsl(var(--border-muted))', gap: '16px', marginTop: '8px' }}>
                 <span 
                   onClick={() => setActiveTab('alerts')}
                   style={{
@@ -365,5 +450,3 @@ export default function AgentManager({ agents }: AgentManagerProps) {
     </div>
   );
 }
-
-// Spin animation keyframe helper added inside useEffect in App or main index.css

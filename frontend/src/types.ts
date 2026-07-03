@@ -8,6 +8,9 @@ export interface Agent {
   cpuUsage: number;
   ramUsage: number;
   diskUsage: number;
+  networkIn: number;
+  networkOut: number;
+  threatScore: number;
 }
 
 export interface Alert {
