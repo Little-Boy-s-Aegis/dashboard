@@ -28,11 +28,11 @@ export default function DashboardOverview({ summary, recentAlerts, agents, actio
     const diffMinutes = (now - alertTime) / (1000 * 60);
     switch (timeRange) {
       case '15m': return diffMinutes <= 15;
-      case '1h':  return diffMinutes <= 60;
-      case '4h':  return diffMinutes <= 240;
+      case '1h': return diffMinutes <= 60;
+      case '4h': return diffMinutes <= 240;
       case '12h': return diffMinutes <= 720;
       case '24h':
-      default:    return diffMinutes <= 1440;
+      default: return diffMinutes <= 1440;
     }
   };
 
@@ -97,8 +97,6 @@ export default function DashboardOverview({ summary, recentAlerts, agents, actio
     finally { setSimulating(false); setTimeout(() => setSimMsg(''), 4000); }
   };
 
-  const threatColor = (l: string) => l === 'Severe' ? 'var(--critical)' : l === 'Elevated' ? 'var(--high)' : 'var(--low)';
-
   const techniques = [
     { id: 'T1110', name: 'Brute Force' },
     { id: 'T1059', name: 'Command & Script' },
@@ -116,6 +114,84 @@ export default function DashboardOverview({ summary, recentAlerts, agents, actio
     </div>
   );
 
+  const highestSeverity = (() => {
+    const activeAlerts = filteredAlerts.filter(a => a.status !== 'resolved');
+    if (activeAlerts.length === 0) return 'Safe';
+    const severities = activeAlerts.map(a => a.severity);
+    if (severities.includes('critical')) return 'Crit';
+    if (severities.includes('high')) return 'High';
+    if (severities.includes('medium')) return 'Medium';
+    return 'Low';
+  })();
+
+  const systemStatus = highestSeverity === 'Safe' ? 'Operational' : 'Being Attacked';
+  const systemStatusColor = systemStatus === 'Operational' ? 'var(--low)' : 'var(--critical)';
+
+  const getSeverityStyle = (sev: string) => {
+    switch (sev) {
+      case 'Crit':
+        return {
+          background: 'rgba(217, 63, 60, 0.18)',
+          color: 'var(--critical)',
+          border: '1px solid rgba(217, 63, 60, 0.3)',
+          padding: '1px 5px',
+          borderRadius: '3px',
+          fontWeight: 600,
+          marginLeft: '4px',
+          fontSize: '0.68rem',
+          textTransform: 'uppercase' as const
+        };
+      case 'High':
+        return {
+          background: 'rgba(242, 124, 54, 0.18)',
+          color: 'var(--high)',
+          border: '1px solid rgba(242, 124, 54, 0.3)',
+          padding: '1px 5px',
+          borderRadius: '3px',
+          fontWeight: 600,
+          marginLeft: '4px',
+          fontSize: '0.68rem',
+          textTransform: 'uppercase' as const
+        };
+      case 'Medium':
+        return {
+          background: 'rgba(230, 180, 50, 0.18)',
+          color: 'var(--medium)',
+          border: '1px solid rgba(230, 180, 50, 0.3)',
+          padding: '1px 5px',
+          borderRadius: '3px',
+          fontWeight: 600,
+          marginLeft: '4px',
+          fontSize: '0.68rem',
+          textTransform: 'uppercase' as const
+        };
+      case 'Low':
+        return {
+          background: 'rgba(60, 180, 114, 0.18)',
+          color: 'var(--low)',
+          border: '1px solid rgba(60, 180, 114, 0.3)',
+          padding: '1px 5px',
+          borderRadius: '3px',
+          fontWeight: 600,
+          marginLeft: '4px',
+          fontSize: '0.68rem',
+          textTransform: 'uppercase' as const
+        };
+      default:
+        return {
+          background: 'rgba(255, 255, 255, 0.05)',
+          color: 'var(--text-3)',
+          border: '1px solid var(--border-1)',
+          padding: '1px 5px',
+          borderRadius: '3px',
+          fontWeight: 600,
+          marginLeft: '4px',
+          fontSize: '0.68rem',
+          textTransform: 'uppercase' as const
+        };
+    }
+  };
+
   return (
     <div style={{ animation: 'fadeInUp 0.25s ease-out' }}>
       <div className="page-header">
@@ -124,10 +200,10 @@ export default function DashboardOverview({ summary, recentAlerts, agents, actio
           <p className="page-subtitle">Real-time threat monitoring and triage console</p>
         </div>
         <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-          <select 
-            className="select-input" 
-            value={timeRange} 
-            onChange={e => setTimeRange(e.target.value)} 
+          <select
+            className="select-input"
+            value={timeRange}
+            onChange={e => setTimeRange(e.target.value)}
             style={{ minWidth: 80, padding: '4px 8px', fontSize: '0.78rem', height: 28 }}
           >
             <option value="15m">15m</option>
@@ -143,9 +219,11 @@ export default function DashboardOverview({ summary, recentAlerts, agents, actio
       {/* KPI Strip */}
       <div className="kpi-grid">
         <div className="glass-panel kpi-card">
-          <div className="kpi-header"><span className="kpi-title">Threat Level</span><Shield size={14} style={{ color: threatColor(summary?.threatLevel || 'Normal'), opacity: 0.6 }} /></div>
-          <div className="kpi-value" style={{ color: threatColor(summary?.threatLevel || 'Normal') }}>{summary?.threatLevel || '—'}</div>
-          <div className="kpi-trend">System operational</div>
+          <div className="kpi-header"><span className="kpi-title">System Status</span><Shield size={14} style={{ color: systemStatusColor, opacity: 0.6 }} /></div>
+          <div className="kpi-value" style={{ color: systemStatusColor }}>{systemStatus}</div>
+          <div className="kpi-trend" style={{ display: 'flex', alignItems: 'center', marginTop: 4 }}>
+            Highest Threat Level: <span style={getSeverityStyle(highestSeverity)}>{highestSeverity}</span>
+          </div>
         </div>
         <div className="glass-panel kpi-card">
           <div className="kpi-header"><span className="kpi-title">Monitored Hosts</span><Monitor size={14} style={{ color: 'var(--accent)', opacity: 0.6 }} /></div>
@@ -178,27 +256,49 @@ export default function DashboardOverview({ summary, recentAlerts, agents, actio
               agents.find(a => a.id === 'agent-03') || agents[2]
             ].filter(Boolean).map((agent, idx) => {
               const highestSev = getHighestSeverityForAgent(agent.id);
+              const score = getAbnormalityScore(agent.id);
+              const totalEvents = filteredAlerts.filter(a => a.agentId === agent.id && ['low', 'medium', 'high', 'critical'].includes(a.severity)).length;
               return (
                 <div key={agent.id} style={{
-                  padding: '8px 12px', background: 'var(--bg-surface)', border: '1px solid var(--border-0)',
-                  borderRadius: 'var(--r-xs)', display: 'flex', flexDirection: 'column', gap: 4
+                  padding: '10px 14px', background: 'var(--bg-surface)', border: '1px solid var(--border-1)',
+                  borderRadius: 'var(--r-xs)', display: 'flex', flexDirection: 'column', gap: 6
                 }}>
                   <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                    <span style={{ fontWeight: 600, color: 'var(--text-0)', fontSize: '0.78rem' }}>
+                    <span style={{ fontWeight: 600, color: 'var(--text-0)', fontSize: '0.82rem' }}>
                       A{idx + 1}: {agent.name}
                     </span>
-                    <span className={`badge ${getSeverityBadgeColor(highestSev)}`} style={{ fontSize: '0.58rem', padding: '1px 4px' }}>{highestSev}</span>
+                    <span style={{ fontSize: '0.7rem', color: 'var(--text-3)' }}>{agent.ip}</span>
                   </div>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                    <span style={{ fontSize: '0.7rem', color: 'var(--text-3)' }}>Abnormality:</span>
-                    <div style={{ flex: 1, height: 4, background: 'rgba(255,255,255,0.05)', borderRadius: 2 }}>
+
+                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10, borderTop: '1px solid rgba(255,255,255,0.03)', borderBottom: '1px solid rgba(255,255,255,0.03)', padding: '5px 0' }}>
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+                      <span style={{ fontSize: '0.62rem', color: 'var(--text-3)', textTransform: 'uppercase', letterSpacing: '0.03em' }}>Highest Event</span>
+                      <div>
+                        <span className={`badge ${getSeverityBadgeColor(highestSev)}`} style={{ fontSize: '0.58rem', padding: '1px 4px' }}>
+                          {highestSev}
+                        </span>
+                      </div>
+                    </div>
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+                      <span style={{ fontSize: '0.62rem', color: 'var(--text-3)', textTransform: 'uppercase', letterSpacing: '0.03em' }}>Total Events</span>
+                      <strong style={{ fontSize: '0.78rem', color: totalEvents > 0 ? 'var(--accent)' : 'var(--text-2)' }}>{totalEvents}</strong>
+                    </div>
+                  </div>
+
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 3, marginTop: 2 }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.74rem' }}>
+                      <span style={{ color: 'var(--text-2)' }}>Abnormality:</span>
+                      <strong style={{ color: score > 70 ? 'var(--critical-dim)' : score > 40 ? 'var(--high-dim)' : 'var(--low-dim)' }}>
+                        {score}%
+                      </strong>
+                    </div>
+                    <div style={{ width: '100%', height: 4, background: 'rgba(255,255,255,0.05)', borderRadius: 2 }}>
                       <div style={{
-                        width: `${getAbnormalityScore(agent.id)}%`, height: '100%',
-                        background: getAbnormalityScore(agent.id) > 70 ? 'var(--critical)' : getAbnormalityScore(agent.id) > 40 ? 'var(--high)' : 'var(--low)',
+                        width: `${score}%`, height: '100%',
+                        background: score > 70 ? 'var(--critical)' : score > 40 ? 'var(--high)' : 'var(--low)',
                         borderRadius: 2
                       }} />
                     </div>
-                    <span style={{ fontSize: '0.72rem', fontWeight: 600, color: 'var(--text-1)', width: 28, textAlign: 'right' }}>{getAbnormalityScore(agent.id)}%</span>
                   </div>
                 </div>
               );
@@ -207,11 +307,11 @@ export default function DashboardOverview({ summary, recentAlerts, agents, actio
         </div>
 
         {/* Right: Security Orchestrator Table */}
-        <div className="glass-panel" style={{ padding: 14 }}>
+        <div className="glass-panel" style={{ padding: 14, display: 'flex', flexDirection: 'column' }}>
           <h3 style={{ fontSize: '0.82rem', display: 'flex', alignItems: 'center', gap: 6, color: 'var(--text-0)', marginBottom: 8 }}>
             <Cpu size={13} style={{ color: 'var(--info)' }} /> Security Orchestrator status
           </h3>
-          <div className="table-container" style={{ maxHeight: 135, overflowY: 'auto' }}>
+          <div className="table-container" style={{ flex: 1, overflowY: 'auto', maxHeight: 330 }}>
             <table className="sec-table" style={{ width: '100%', fontSize: '0.78rem' }}>
               <thead>
                 <tr>
@@ -220,6 +320,7 @@ export default function DashboardOverview({ summary, recentAlerts, agents, actio
                   <th style={{ textAlign: 'center' }}>High</th>
                   <th style={{ textAlign: 'center' }}>Medium</th>
                   <th style={{ textAlign: 'center' }}>Low</th>
+                  <th style={{ textAlign: 'center' }}>Highest Level</th>
                   <th>Mitigation</th>
                 </tr>
               </thead>
@@ -229,7 +330,8 @@ export default function DashboardOverview({ summary, recentAlerts, agents, actio
                   const hCount = filteredAlerts.filter(x => x.agentId === a.id && x.severity === 'high' && x.status !== 'resolved').length;
                   const mCount = filteredAlerts.filter(x => x.agentId === a.id && x.severity === 'medium' && x.status !== 'resolved').length;
                   const lCount = filteredAlerts.filter(x => x.agentId === a.id && x.severity === 'low' && x.status !== 'resolved').length;
-                  
+                  const highestSev = getHighestSeverityForAgent(a.id);
+
                   let statusColor = 'var(--low)';
                   let statusLabel = 'SECURED';
                   if (a.status === 'disconnected') {
@@ -253,6 +355,11 @@ export default function DashboardOverview({ summary, recentAlerts, agents, actio
                       <td style={{ textAlign: 'center', color: hCount > 0 ? 'var(--high)' : 'var(--text-3)', fontWeight: hCount > 0 ? 600 : 400, padding: '4px 8px' }}>{hCount}</td>
                       <td style={{ textAlign: 'center', color: mCount > 0 ? 'var(--medium)' : 'var(--text-3)', fontWeight: mCount > 0 ? 600 : 400, padding: '4px 8px' }}>{mCount}</td>
                       <td style={{ textAlign: 'center', color: lCount > 0 ? 'var(--low)' : 'var(--text-3)', fontWeight: lCount > 0 ? 600 : 400, padding: '4px 8px' }}>{lCount}</td>
+                      <td style={{ textAlign: 'center', padding: '4px 8px' }}>
+                        <span className={`badge ${getSeverityBadgeColor(highestSev)}`} style={{ fontSize: '0.58rem', padding: '1px 4px' }}>
+                          {highestSev}
+                        </span>
+                      </td>
                       <td style={{ padding: '4px 8px' }}>
                         <span style={{ fontSize: '0.68rem', fontWeight: 600, color: statusColor, display: 'flex', alignItems: 'center', gap: 3 }}>
                           <span style={{ width: 4, height: 4, background: statusColor, borderRadius: '50%' }} />
