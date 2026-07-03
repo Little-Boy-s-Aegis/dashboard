@@ -72,20 +72,6 @@ export default function ResponseCenter({ agents, alerts, actions, timeRange, set
     }
   };
 
-  // Dynamic Abnormality Score based on alerts in selected time window
-  const getAbnormalityScore = (agentId: string) => {
-    const agentAlerts = filteredAlerts.filter(a => a.agentId === agentId && a.status !== 'resolved');
-    if (agentAlerts.length === 0) return 5; // base safe score
-    let score = 0;
-    agentAlerts.forEach(a => {
-      if (a.severity === 'critical') score += 40;
-      else if (a.severity === 'high') score += 25;
-      else if (a.severity === 'medium') score += 12;
-      else score += 5;
-    });
-    return Math.min(100, score);
-  };
-
   const handleTrigger = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!target) {
@@ -160,7 +146,6 @@ export default function ResponseCenter({ agents, alerts, actions, timeRange, set
           {targetAgents.map((agent, i) => {
             if (!agent) return null;
             const highestSev = getHighestSeverityForAgent(agent.id);
-            const score = getAbnormalityScore(agent.id);
             const totalEvents = filteredAlerts.filter(a => a.agentId === agent.id && ['low', 'medium', 'high', 'critical'].includes(a.severity)).length;
             return (
               <div key={agent.id} style={{
@@ -186,22 +171,6 @@ export default function ResponseCenter({ agents, alerts, actions, timeRange, set
                   <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
                     <span style={{ fontSize: '0.62rem', color: 'var(--text-3)', textTransform: 'uppercase', letterSpacing: '0.03em' }}>Total Events</span>
                     <strong style={{ fontSize: '0.78rem', color: totalEvents > 0 ? 'var(--accent)' : 'var(--text-2)' }}>{totalEvents}</strong>
-                  </div>
-                </div>
-
-                <div style={{ display: 'flex', flexDirection: 'column', gap: 3, marginTop: 2 }}>
-                  <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.74rem' }}>
-                    <span style={{ color: 'var(--text-2)' }}>Abnormality:</span>
-                    <strong style={{ color: score > 70 ? 'var(--critical-dim)' : score > 40 ? 'var(--high-dim)' : 'var(--low-dim)' }}>
-                      {score}%
-                    </strong>
-                  </div>
-                  <div style={{ width: '100%', height: 4, background: 'rgba(255,255,255,0.05)', borderRadius: 2 }}>
-                    <div style={{
-                      width: `${score}%`, height: '100%',
-                      background: score > 70 ? 'var(--critical)' : score > 40 ? 'var(--high)' : 'var(--low)',
-                      borderRadius: 2
-                    }} />
                   </div>
                 </div>
               </div>
