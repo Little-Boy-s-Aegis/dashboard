@@ -1,445 +1,228 @@
 import { useState, useEffect } from 'react';
-import { Server, Cpu, HardDrive, ShieldAlert, CheckCircle2, ChevronRight, Terminal, RefreshCw, Activity } from 'lucide-react';
+import { Server, Cpu, HardDrive, ShieldAlert, CheckCircle2, ChevronRight, Terminal, RefreshCw, Activity, Wifi } from 'lucide-react';
 import type { Agent, Alert, FIMEvent } from '../types';
 
-interface AgentManagerProps {
-  agents: Agent[];
-}
+interface Props { agents: Agent[]; }
 
-export default function AgentManager({ agents }: AgentManagerProps) {
-  const [selectedAgentId, setSelectedAgentId] = useState<string | null>(null);
-  const [agentDetail, setAgentDetail] = useState<{
-    agent: Agent;
-    alerts: Alert[];
-    fim: FIMEvent[];
-  } | null>(null);
+export default function AgentManager({ agents }: Props) {
+  const [selId, setSelId] = useState<string | null>(null);
+  const [detail, setDetail] = useState<{ agent: Agent; alerts: Alert[]; fim: FIMEvent[] } | null>(null);
   const [loading, setLoading] = useState(false);
-  const [activeTab, setActiveTab] = useState<'alerts' | 'fim' | 'deploy'>('alerts');
-  const [copiedCmd, setCopiedCmd] = useState<string | null>(null);
+  const [tab, setTab] = useState<'alerts' | 'fim' | 'deploy'>('alerts');
+  const [copied, setCopied] = useState<string | null>(null);
 
-  // Fetch agent detail when an agent is selected
   useEffect(() => {
-    if (selectedAgentId) {
+    if (selId) {
       setLoading(true);
-      fetch(`/api/agents/${selectedAgentId}`)
-        .then(res => res.json())
-        .then(data => {
-          setAgentDetail(data);
-          setLoading(false);
-        })
-        .catch(err => {
-          console.error(err);
-          setLoading(false);
-        });
-    } else {
-      setAgentDetail(null);
-    }
-  }, [selectedAgentId, agents]); // Reload detail if agents list updates
+      fetch(`/api/agents/${selId}`).then(r => r.json()).then(d => { setDetail(d); setLoading(false); }).catch(() => setLoading(false));
+    } else setDetail(null);
+  }, [selId, agents]);
 
-  const copyCommand = (cmd: string, id: string) => {
-    navigator.clipboard.writeText(cmd);
-    setCopiedCmd(id);
-    setTimeout(() => setCopiedCmd(null), 2000);
+  const copy = (cmd: string, id: string) => { navigator.clipboard.writeText(cmd); setCopied(id); setTimeout(() => setCopied(null), 2000); };
+
+  const statusIcon = (s: string) => {
+    if (s === 'alerting') return <ShieldAlert size={14} style={{ color: 'var(--critical)' }} />;
+    if (s === 'active') return <CheckCircle2 size={14} style={{ color: 'var(--low)' }} />;
+    return <Server size={14} style={{ color: 'var(--text-3)' }} />;
   };
 
-  const getStatusIcon = (status: string) => {
-    switch (status) {
-      case 'alerting':
-        return <ShieldAlert size={18} style={{ color: '#fb7185' }} />;
-      case 'active':
-        return <CheckCircle2 size={18} style={{ color: '#34d399' }} />;
-      default:
-        return <Server size={18} style={{ color: '#94a3b8' }} />;
-    }
-  };
+  const barColor = (v: number) => v > 85 ? 'var(--critical)' : v > 65 ? 'var(--high)' : 'var(--low)';
+  const threatColor = (s: number) => s >= 70 ? 'var(--critical)' : s >= 40 ? 'var(--high)' : 'var(--low)';
+  const threatLabel = (s: number) => s >= 70 ? 'SEVERE' : s >= 40 ? 'SUSPICIOUS' : 'SECURE';
 
-  const getProgressBarColor = (val: number) => {
-    if (val > 85) return '#f43f5e'; // Red
-    if (val > 65) return '#f97316'; // Orange
-    return '#10b981'; // Green
-  };
+  const Bar = ({ v, color }: { v: number; color: string }) => (
+    <div style={{ width: '100%', height: 3, background: 'var(--border-0)', borderRadius: 1 }}>
+      <div style={{ width: `${v}%`, height: '100%', background: color, borderRadius: 1, transition: 'width 0.3s' }} />
+    </div>
+  );
 
-  const getThreatScoreColor = (score: number) => {
-    if (score >= 70) return '#f43f5e'; // Red
-    if (score >= 40) return '#f97316'; // Orange
-    return '#10b981'; // Green
-  };
+  const linuxCmd = `curl -so wazuh-agent.deb https://packages.wazuh.com/4.x/apt/pool/main/w/wazuh-agent/wazuh-agent_4.5.3-1_amd64.deb && WAZUH_MANAGER="192.168.10.250" dpkg -i wazuh-agent.deb && systemctl enable --now wazuh-agent`;
+  const winCmd = `Invoke-WebRequest -Uri "https://packages.wazuh.com/4.x/windows/wazuh-agent-4.5.3-1.msi" -OutFile "wazuh-agent.msi"; msiexec /i wazuh-agent.msi /q WAZUH_MANAGER="192.168.10.250"; Start-Service Wazuh`;
 
-  const linuxInstallCmd = `curl -so wazuh-agent.deb https://packages.wazuh.com/4.x/apt/pool/main/w/wazuh-agent/wazuh-agent_4.5.3-1_amd64.deb && WAZUH_MANAGER="192.168.10.250" dpkg -i wazuh-agent.deb && systemctl daemon-reload && systemctl enable wazuh-agent && systemctl start wazuh-agent`;
-  
-  const winInstallCmd = `Invoke-WebRequest -Uri "https://packages.wazuh.com/4.x/windows/wazuh-agent-4.5.3-1.msi" -OutFile "wazuh-agent.msi"; Start-Process msiexec.exe -ArgumentList '/i wazuh-agent.msi /q WAZUH_MANAGER="192.168.10.250"' -Wait; Start-Service -Name "Wazuh"`;
+  const tabItems = [
+    { key: 'alerts', label: `Alerts (${detail?.alerts.filter(a => a.status !== 'resolved').length || 0})` },
+    { key: 'fim', label: `FIM (${detail?.fim.length || 0})` },
+    { key: 'deploy', label: 'Deploy' },
+  ];
 
   return (
-    <div style={{ display: 'grid', gridTemplateColumns: selectedAgentId ? '1fr 1.2fr' : '1fr', gap: '24px', transition: 'all 0.3s ease' }}>
-      
-      {/* Agents List Card */}
-      <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
-        <div className="page-header" style={{ marginBottom: '16px' }}>
+    <div style={{ display: 'grid', gridTemplateColumns: selId ? '1fr 1.2fr' : '1fr', gap: 16, animation: 'fadeInUp 0.25s ease-out' }}>
+      {/* List */}
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+        <div className="page-header" style={{ marginBottom: 6 }}>
           <div>
-            <h1 className="page-title">Agent Host Monitor</h1>
-            <p className="page-subtitle">Inspect endpoints, network throughput, and threat vulnerability scores</p>
+            <h1 className="page-title">Host Monitor</h1>
+            <p className="page-subtitle">Endpoints, network, and threat scores</p>
           </div>
         </div>
 
-        <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
-          {agents.map((agent) => (
-            <div
-              key={agent.id}
-              onClick={() => setSelectedAgentId(agent.id)}
-              className={`glass-panel ${agent.status === 'alerting' ? 'pulse-alerting' : ''}`}
-              style={{
-                padding: '16px',
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'space-between',
-                cursor: 'pointer',
-                background: selectedAgentId === agent.id ? 'rgba(56, 189, 248, 0.05)' : 'rgba(13, 13, 18, 0.45)',
-                borderLeft: agent.status === 'alerting' ? '3px solid #f43f5e' : agent.status === 'active' ? '3px solid #10b981' : '3px solid #64748b'
-              }}
-            >
-              <div style={{ display: 'flex', alignItems: 'center', gap: '14px' }}>
-                <div style={{
-                  padding: '8px',
-                  borderRadius: '8px',
-                  background: 'rgba(255,255,255,0.03)',
-                  display: 'flex',
-                  alignItems: 'center'
-                }}>
-                  {getStatusIcon(agent.status)}
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 1, background: 'var(--border-1)', border: '1px solid var(--border-1)', borderRadius: 'var(--r-xs)', overflow: 'hidden' }}>
+          {agents.map(a => (
+            <div key={a.id} onClick={() => setSelId(a.id)} style={{
+              padding: '10px 14px', display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+              cursor: 'pointer', background: selId === a.id ? 'var(--bg-elevated)' : 'var(--bg-canvas)',
+              transition: 'background 0.1s'
+            }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                <div style={{ padding: 5, background: 'var(--bg-surface)', borderRadius: 'var(--r-xs)', display: 'flex', border: '1px solid var(--border-0)' }}>
+                  {statusIcon(a.status)}
                 </div>
                 <div>
-                  <h3 style={{ fontSize: '0.95rem' }}>{agent.name}</h3>
-                  <div style={{ display: 'flex', gap: '8px', fontSize: '0.75rem', color: '#94a3b8', marginTop: '4px', alignItems: 'center' }}>
-                    <span>{agent.ip}</span>
-                    <span>•</span>
-                    <span>{agent.os}</span>
-                    <span>•</span>
-                    <span style={{ color: '#cbd5e1', display: 'flex', alignItems: 'center', gap: '3px' }}>
-                      <Activity size={10} /> ↓{agent.networkIn.toFixed(1)} / ↑{agent.networkOut.toFixed(1)} Mbps
+                  <div style={{ fontSize: '0.88rem', fontWeight: 600, color: 'var(--text-0)' }}>{a.name}</div>
+                  <div style={{ display: 'flex', gap: 6, fontSize: '0.7rem', color: 'var(--text-3)', marginTop: 2, fontFamily: "'IBM Plex Mono', monospace" }}>
+                    <span>{a.ip}</span>
+                    <span style={{ opacity: 0.3 }}>·</span>
+                    <span>{a.os}</span>
+                    <span style={{ opacity: 0.3 }}>·</span>
+                    <span style={{ display: 'flex', alignItems: 'center', gap: 2 }}>
+                      <Wifi size={8} /> ↓{a.networkIn.toFixed(1)}/↑{a.networkOut.toFixed(1)}
                     </span>
                   </div>
                 </div>
               </div>
-
-              <div style={{ display: 'flex', gap: '20px', alignItems: 'center' }}>
-                {/* CPU usage */}
-                <div style={{ display: 'flex', flexDirection: 'column', gap: '4px', fontSize: '0.7rem', width: '65px', color: '#94a3b8' }}>
-                  <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-                    <span>CPU</span>
-                    <span style={{ fontWeight: 600 }}>{agent.cpuUsage.toFixed(0)}%</span>
-                  </div>
-                  <div style={{ width: '100%', height: '4px', background: 'rgba(255,255,255,0.08)', borderRadius: '2px', overflow: 'hidden' }}>
-                    <div style={{ width: `${agent.cpuUsage}%`, height: '100%', background: getProgressBarColor(agent.cpuUsage) }} />
-                  </div>
+              <div style={{ display: 'flex', gap: 14, alignItems: 'center' }}>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 2, width: 52, fontSize: '0.62rem', color: 'var(--text-3)' }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between' }}><span>CPU</span><span style={{ fontWeight: 600, color: barColor(a.cpuUsage), fontFamily: "'IBM Plex Mono', monospace" }}>{a.cpuUsage.toFixed(0)}%</span></div>
+                  <Bar v={a.cpuUsage} color={barColor(a.cpuUsage)} />
                 </div>
-                
-                {/* RAM usage */}
-                <div style={{ display: 'flex', flexDirection: 'column', gap: '4px', fontSize: '0.7rem', width: '65px', color: '#94a3b8' }}>
-                  <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-                    <span>RAM</span>
-                    <span style={{ fontWeight: 600 }}>{agent.ramUsage.toFixed(0)}%</span>
-                  </div>
-                  <div style={{ width: '100%', height: '4px', background: 'rgba(255,255,255,0.08)', borderRadius: '2px', overflow: 'hidden' }}>
-                    <div style={{ width: `${agent.ramUsage}%`, height: '100%', background: getProgressBarColor(agent.ramUsage) }} />
-                  </div>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 2, width: 52, fontSize: '0.62rem', color: 'var(--text-3)' }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between' }}><span>RAM</span><span style={{ fontWeight: 600, color: barColor(a.ramUsage), fontFamily: "'IBM Plex Mono', monospace" }}>{a.ramUsage.toFixed(0)}%</span></div>
+                  <Bar v={a.ramUsage} color={barColor(a.ramUsage)} />
                 </div>
-
-                {/* Threat Score Badge */}
-                <div style={{ display: 'flex', flexDirection: 'column', gap: '2px', alignItems: 'center', width: '75px' }}>
-                  <span style={{ fontSize: '0.6rem', color: '#64748b', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Threat Score</span>
-                  <span style={{
-                    fontSize: '0.9rem',
-                    fontWeight: 800,
-                    color: getThreatScoreColor(agent.threatScore),
-                    textShadow: agent.threatScore > 0 ? `0 0 6px ${getThreatScoreColor(agent.threatScore)}` : 'none'
-                  }}>
-                    {agent.threatScore}/100
-                  </span>
+                <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', width: 55 }}>
+                  <span style={{ fontSize: '0.55rem', color: 'var(--text-3)', fontWeight: 600, letterSpacing: '0.04em' }}>THREAT</span>
+                  <span style={{ fontSize: '0.82rem', fontWeight: 700, color: threatColor(a.threatScore), fontFamily: "'IBM Plex Mono', monospace" }}>{a.threatScore}/100</span>
                 </div>
-
-                <ChevronRight size={16} style={{ color: '#64748b' }} />
+                <ChevronRight size={12} style={{ color: 'var(--text-4)' }} />
               </div>
             </div>
           ))}
         </div>
       </div>
 
-      {/* Agent Detail Panel */}
-      {selectedAgentId && (
-        <div className="glass-panel" style={{ padding: '24px', display: 'flex', flexDirection: 'column', gap: '20px', height: 'fit-content', border: '1px solid rgba(255,255,255,0.08)' }}>
+      {/* Detail */}
+      {selId && (
+        <div className="glass-panel" style={{ padding: 18, display: 'flex', flexDirection: 'column', gap: 14, height: 'fit-content', animation: 'fadeInUp 0.2s' }}>
           {loading ? (
-            <div style={{ textAlign: 'center', padding: '60px 0', color: '#38bdf8' }}>
-              <RefreshCw size={24} className="pulse-alerting" style={{ animation: 'spin 1.5s linear infinite', margin: '0 auto 10px auto' }} />
-              <span style={{ fontSize: '0.85rem' }}>Gathering host diagnostic info...</span>
+            <div style={{ textAlign: 'center', padding: '40px 0', color: 'var(--accent)' }}>
+              <RefreshCw size={18} style={{ animation: 'spin 1.5s linear infinite', display: 'block', margin: '0 auto 8px' }} />
+              <span style={{ fontSize: '0.78rem' }}>Loading...</span>
             </div>
-          ) : agentDetail ? (
+          ) : detail ? (
             <>
-              {/* Detail Header */}
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between' }}>
                 <div>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                    <span className={`badge ${agentDetail.agent.status === 'active' ? 'badge-info' : agentDetail.agent.status === 'alerting' ? 'badge-critical' : 'badge-neutral'}`}>
-                      {agentDetail.agent.status}
-                    </span>
-                    <span style={{ fontSize: '0.75rem', color: '#64748b', fontFamily: 'JetBrains Mono' }}>{agentDetail.agent.id}</span>
+                  <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+                    <span className={`badge ${detail.agent.status === 'active' ? 'badge-success' : detail.agent.status === 'alerting' ? 'badge-critical' : 'badge-neutral'}`}>{detail.agent.status}</span>
+                    <code style={{ fontSize: '0.68rem', color: 'var(--text-3)' }}>{detail.agent.id}</code>
                   </div>
-                  <h2 style={{ fontSize: '1.25rem', marginTop: '6px' }}>{agentDetail.agent.name}</h2>
-                  <p style={{ margin: '4px 0 0 0', fontSize: '0.8rem', color: '#94a3b8' }}>IP Address: {agentDetail.agent.ip} | OS: {agentDetail.agent.os}</p>
+                  <h2 style={{ fontSize: '1.1rem', marginTop: 4 }}>{detail.agent.name}</h2>
+                  <p style={{ margin: '2px 0 0', fontSize: '0.76rem', color: 'var(--text-3)' }}>{detail.agent.ip} · {detail.agent.os}</p>
                 </div>
-                <button className="btn btn-outline" onClick={() => setSelectedAgentId(null)} style={{ padding: '4px 10px' }}>
-                  ✕ Close
-                </button>
+                <button className="btn btn-outline" onClick={() => setSelId(null)} style={{ padding: '2px 8px', height: 'fit-content' }}>✕</button>
               </div>
 
-              {/* Resource grid - Row 1 (CPU, RAM, Disk) */}
-              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '12px' }}>
-                <div style={{ padding: '12px', background: 'rgba(255,255,255,0.02)', borderRadius: '8px', border: '1px solid rgba(255,255,255,0.03)' }}>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '0.75rem', color: '#94a3b8', marginBottom: '8px' }}>
-                    <Cpu size={14} /> CPU LOAD
+              {/* Metrics */}
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 1, background: 'var(--border-1)', border: '1px solid var(--border-1)', borderRadius: 'var(--r-xs)', overflow: 'hidden' }}>
+                {[
+                  { icon: <Cpu size={12} />, label: 'CPU', val: detail.agent.cpuUsage, c: barColor(detail.agent.cpuUsage) },
+                  { icon: <Server size={12} />, label: 'RAM', val: detail.agent.ramUsage, c: barColor(detail.agent.ramUsage) },
+                  { icon: <HardDrive size={12} />, label: 'DISK', val: detail.agent.diskUsage, c: 'var(--accent)' },
+                ].map((m, i) => (
+                  <div key={i} style={{ padding: 10, background: 'var(--bg-canvas)' }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 4, fontSize: '0.62rem', color: 'var(--text-3)', fontWeight: 600, letterSpacing: '0.04em', marginBottom: 6 }}>{m.icon} {m.label}</div>
+                    <div style={{ fontSize: '1.1rem', fontWeight: 700, color: 'var(--text-0)', fontFamily: "'IBM Plex Mono', monospace" }}>{m.val.toFixed(1)}%</div>
+                    <div style={{ marginTop: 6 }}><Bar v={m.val} color={m.c} /></div>
                   </div>
-                  <div style={{ fontSize: '1.25rem', fontWeight: 800 }}>{agentDetail.agent.cpuUsage.toFixed(1)}%</div>
-                  <div style={{ width: '100%', height: '4px', background: 'rgba(255,255,255,0.08)', borderRadius: '2px', overflow: 'hidden', marginTop: '8px' }}>
-                    <div style={{ width: `${agentDetail.agent.cpuUsage}%`, height: '100%', background: getProgressBarColor(agentDetail.agent.cpuUsage) }} />
-                  </div>
-                </div>
-
-                <div style={{ padding: '12px', background: 'rgba(255,255,255,0.02)', borderRadius: '8px', border: '1px solid rgba(255,255,255,0.03)' }}>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '0.75rem', color: '#94a3b8', marginBottom: '8px' }}>
-                    <Server size={14} /> RAM UTILS
-                  </div>
-                  <div style={{ fontSize: '1.25rem', fontWeight: 800 }}>{agentDetail.agent.ramUsage.toFixed(1)}%</div>
-                  <div style={{ width: '100%', height: '4px', background: 'rgba(255,255,255,0.08)', borderRadius: '2px', overflow: 'hidden', marginTop: '8px' }}>
-                    <div style={{ width: `${agentDetail.agent.ramUsage}%`, height: '100%', background: getProgressBarColor(agentDetail.agent.ramUsage) }} />
-                  </div>
-                </div>
-
-                <div style={{ padding: '12px', background: 'rgba(255,255,255,0.02)', borderRadius: '8px', border: '1px solid rgba(255,255,255,0.03)' }}>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '0.75rem', color: '#94a3b8', marginBottom: '8px' }}>
-                    <HardDrive size={14} /> DISK STORAGE
-                  </div>
-                  <div style={{ fontSize: '1.25rem', fontWeight: 800 }}>{agentDetail.agent.diskUsage.toFixed(1)}%</div>
-                  <div style={{ width: '100%', height: '4px', background: 'rgba(255,255,255,0.08)', borderRadius: '2px', overflow: 'hidden', marginTop: '8px' }}>
-                    <div style={{ width: `${agentDetail.agent.diskUsage}%`, height: '100%', background: '#3b82f6' }} />
-                  </div>
-                </div>
+                ))}
               </div>
 
-              {/* Resource grid - Row 2 (Network I/O & Threat Score) */}
-              <div style={{ display: 'grid', gridTemplateColumns: '1.8fr 1fr', gap: '12px' }}>
-                {/* Network I/O card */}
-                <div style={{ padding: '12px', background: 'rgba(255,255,255,0.02)', borderRadius: '8px', border: '1px solid rgba(255,255,255,0.03)' }}>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '0.75rem', color: '#94a3b8', marginBottom: '8px' }}>
-                    <Activity size={14} style={{ color: '#38bdf8' }} /> NETWORK THROUGHPUT (I/O)
+              {/* Network + Threat */}
+              <div style={{ display: 'grid', gridTemplateColumns: '1.6fr 1fr', gap: 1, background: 'var(--border-1)', border: '1px solid var(--border-1)', borderRadius: 'var(--r-xs)', overflow: 'hidden' }}>
+                <div style={{ padding: 10, background: 'var(--bg-canvas)' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 4, fontSize: '0.62rem', color: 'var(--text-3)', fontWeight: 600, marginBottom: 8 }}>
+                    <Activity size={12} style={{ color: 'var(--accent)' }} /> NETWORK I/O
                   </div>
-                  <div style={{ display: 'flex', justifyContent: 'space-around', alignItems: 'center', marginTop: '12px' }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-around' }}>
                     <div>
-                      <span style={{ fontSize: '0.65rem', color: '#64748b', display: 'block', marginBottom: '2px' }}>INCOMING (DOWNLOAD)</span>
-                      <span style={{ fontSize: '1.25rem', fontWeight: 800, color: '#34d399' }}>
-                        ↓ {agentDetail.agent.networkIn.toFixed(1)} <span style={{ fontSize: '0.8rem', fontWeight: 500 }}>Mbps</span>
-                      </span>
+                      <span style={{ fontSize: '0.58rem', color: 'var(--text-3)', fontWeight: 600, display: 'block' }}>DOWN</span>
+                      <span style={{ fontSize: '1rem', fontWeight: 700, color: 'var(--low)', fontFamily: "'IBM Plex Mono', monospace" }}>↓{detail.agent.networkIn.toFixed(1)}</span>
+                      <span style={{ fontSize: '0.68rem', color: 'var(--text-3)' }}> Mbps</span>
                     </div>
-                    <div style={{ height: '30px', width: '1px', background: 'rgba(255,255,255,0.08)' }} />
+                    <div style={{ width: 1, background: 'var(--border-1)' }} />
                     <div>
-                      <span style={{ fontSize: '0.65rem', color: '#64748b', display: 'block', marginBottom: '2px' }}>OUTGOING (UPLOAD / EXFILTRATION)</span>
-                      <span style={{ fontSize: '1.25rem', fontWeight: 800, color: agentDetail.agent.threatScore >= 70 ? '#f43f5e' : '#fb923c' }}>
-                        ↑ {agentDetail.agent.networkOut.toFixed(1)} <span style={{ fontSize: '0.8rem', fontWeight: 500 }}>Mbps</span>
-                      </span>
+                      <span style={{ fontSize: '0.58rem', color: 'var(--text-3)', fontWeight: 600, display: 'block' }}>UP</span>
+                      <span style={{ fontSize: '1rem', fontWeight: 700, color: detail.agent.networkOut > 500 ? 'var(--critical)' : 'var(--high)', fontFamily: "'IBM Plex Mono', monospace" }}>↑{detail.agent.networkOut.toFixed(1)}</span>
+                      <span style={{ fontSize: '0.68rem', color: 'var(--text-3)' }}> Mbps</span>
                     </div>
                   </div>
                 </div>
-
-                {/* Threat Score card */}
-                <div style={{
-                  padding: '12px',
-                  background: 'rgba(255,255,255,0.02)',
-                  borderRadius: '8px',
-                  border: agentDetail.agent.threatScore >= 70 ? '1px solid rgba(244, 63, 94, 0.25)' : '1px solid rgba(255,255,255,0.03)'
-                }}>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '0.75rem', color: '#94a3b8', marginBottom: '8px' }}>
-                    <ShieldAlert size={14} style={{ color: getThreatScoreColor(agentDetail.agent.threatScore) }} /> THREAT SCORE
+                <div style={{ padding: 10, background: 'var(--bg-canvas)' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 4, fontSize: '0.62rem', color: 'var(--text-3)', fontWeight: 600, marginBottom: 6 }}>
+                    <ShieldAlert size={12} style={{ color: threatColor(detail.agent.threatScore) }} /> THREAT
                   </div>
                   <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline' }}>
-                    <div style={{
-                      fontSize: '1.4rem',
-                      fontWeight: 800,
-                      color: getThreatScoreColor(agentDetail.agent.threatScore),
-                      textShadow: agentDetail.agent.threatScore > 0 ? `0 0 8px ${getThreatScoreColor(agentDetail.agent.threatScore)}` : 'none'
-                    }}>
-                      {agentDetail.agent.threatScore} <span style={{ fontSize: '0.8rem', fontWeight: 500, color: '#64748b' }}>/ 100</span>
-                    </div>
-                    <span style={{
-                      fontSize: '0.7rem',
-                      fontWeight: 700,
-                      color: getThreatScoreColor(agentDetail.agent.threatScore)
-                    }}>
-                      {agentDetail.agent.threatScore >= 70 ? 'SEVERE' : agentDetail.agent.threatScore >= 40 ? 'SUSPICIOUS' : 'SECURE'}
+                    <span style={{ fontSize: '1.2rem', fontWeight: 700, color: threatColor(detail.agent.threatScore), fontFamily: "'IBM Plex Mono', monospace" }}>
+                      {detail.agent.threatScore}<span style={{ fontSize: '0.7rem', color: 'var(--text-3)', fontWeight: 400 }}>/100</span>
                     </span>
+                    <span style={{ fontSize: '0.62rem', fontWeight: 700, color: threatColor(detail.agent.threatScore) }}>{threatLabel(detail.agent.threatScore)}</span>
                   </div>
-                  <div style={{ width: '100%', height: '4px', background: 'rgba(255,255,255,0.08)', borderRadius: '2px', overflow: 'hidden', marginTop: '10px' }}>
-                    <div style={{
-                      width: `${agentDetail.agent.threatScore || 4}%`,
-                      height: '100%',
-                      background: getThreatScoreColor(agentDetail.agent.threatScore)
-                    }} />
-                  </div>
+                  <div style={{ marginTop: 6 }}><Bar v={detail.agent.threatScore || 2} color={threatColor(detail.agent.threatScore)} /></div>
                 </div>
               </div>
 
-              {/* Navigation Tabs */}
-              <div style={{ display: 'flex', borderBottom: '1px solid hsl(var(--border-muted))', gap: '16px', marginTop: '8px' }}>
-                <span 
-                  onClick={() => setActiveTab('alerts')}
-                  style={{
-                    paddingBottom: '8px',
-                    fontSize: '0.85rem',
-                    fontWeight: 600,
-                    cursor: 'pointer',
-                    color: activeTab === 'alerts' ? '#38bdf8' : '#64748b',
-                    borderBottom: activeTab === 'alerts' ? '2px solid #38bdf8' : 'none'
-                  }}
-                >
-                  Active Alerts ({agentDetail.alerts.filter(a => a.status !== 'resolved').length})
-                </span>
-                <span 
-                  onClick={() => setActiveTab('fim')}
-                  style={{
-                    paddingBottom: '8px',
-                    fontSize: '0.85rem',
-                    fontWeight: 600,
-                    cursor: 'pointer',
-                    color: activeTab === 'fim' ? '#38bdf8' : '#64748b',
-                    borderBottom: activeTab === 'fim' ? '2px solid #38bdf8' : 'none'
-                  }}
-                >
-                  FIM Events ({agentDetail.fim.length})
-                </span>
-                <span 
-                  onClick={() => setActiveTab('deploy')}
-                  style={{
-                    paddingBottom: '8px',
-                    fontSize: '0.85rem',
-                    fontWeight: 600,
-                    cursor: 'pointer',
-                    color: activeTab === 'deploy' ? '#38bdf8' : '#64748b',
-                    borderBottom: activeTab === 'deploy' ? '2px solid #38bdf8' : 'none'
-                  }}
-                >
-                  Deployment Guide
-                </span>
+              {/* Tabs */}
+              <div style={{ display: 'flex', borderBottom: '1px solid var(--border-1)', gap: 0, marginTop: 4 }}>
+                {tabItems.map(t => (
+                  <span key={t.key} onClick={() => setTab(t.key as any)} style={{
+                    padding: '6px 12px', fontSize: '0.78rem', fontWeight: 600, cursor: 'pointer',
+                    color: tab === t.key ? 'var(--accent)' : 'var(--text-3)',
+                    borderBottom: tab === t.key ? '2px solid var(--accent)' : '2px solid transparent',
+                    transition: 'all 0.1s'
+                  }}>{t.label}</span>
+                ))}
               </div>
 
-              {/* Tab Contents */}
-              <div style={{ minHeight: '150px' }}>
-                {activeTab === 'alerts' && (
-                  <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
-                    {agentDetail.alerts.filter(a => a.status !== 'resolved').map(alert => (
-                      <div key={alert.id} style={{
-                        padding: '12px',
-                        background: 'rgba(255,255,255,0.01)',
-                        border: '1px solid rgba(255,255,255,0.03)',
-                        borderRadius: '6px',
-                        display: 'flex',
-                        justifyContent: 'space-between',
-                        alignItems: 'center'
-                      }}>
-                        <div>
-                          <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                            <span className={`badge badge-${alert.severity}`} style={{ fontSize: '0.6rem', padding: '1px 6px' }}>
-                              {alert.severity}
-                            </span>
-                            <span style={{ fontSize: '0.75rem', color: '#64748b' }}>{new Date(alert.timestamp).toLocaleTimeString()}</span>
-                          </div>
-                          <div style={{ fontSize: '0.85rem', fontWeight: 600, marginTop: '4px', color: '#f1f5f9' }}>{alert.title}</div>
+              <div style={{ minHeight: 100 }}>
+                {tab === 'alerts' && (
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+                    {detail.alerts.filter(a => a.status !== 'resolved').map(a => (
+                      <div key={a.id} style={{ padding: '8px 10px', background: 'var(--bg-surface)', border: '1px solid var(--border-0)', borderRadius: 'var(--r-xs)' }}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                          <span className={`badge badge-${a.severity}`}>{a.severity}</span>
+                          <span style={{ fontSize: '0.68rem', color: 'var(--text-3)', fontFamily: "'IBM Plex Mono', monospace" }}>{new Date(a.timestamp).toLocaleTimeString('en-US', { hour12: false })}</span>
                         </div>
+                        <div style={{ fontSize: '0.82rem', fontWeight: 600, marginTop: 3, color: 'var(--text-0)' }}>{a.title}</div>
                       </div>
                     ))}
-                    {agentDetail.alerts.filter(a => a.status !== 'resolved').length === 0 && (
-                      <div style={{ color: '#64748b', fontSize: '0.8rem', textAlign: 'center', padding: '30px 0' }}>
-                        No active/open threats detected on this host.
-                      </div>
-                    )}
+                    {detail.alerts.filter(a => a.status !== 'resolved').length === 0 && <p style={{ textAlign: 'center', padding: '20px 0', color: 'var(--text-3)', fontSize: '0.8rem' }}>No active threats</p>}
                   </div>
                 )}
-
-                {activeTab === 'fim' && (
-                  <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
-                    {agentDetail.fim.slice(0, 5).map(event => (
-                      <div key={event.id} style={{
-                        padding: '10px',
-                        background: 'rgba(255,255,255,0.01)',
-                        borderRadius: '6px',
-                        fontSize: '0.8rem'
-                      }}>
-                        <div style={{ display: 'flex', justifyContent: 'space-between', color: '#64748b', marginBottom: '4px' }}>
-                          <span>Event: 
-                            <strong style={{
-                              marginLeft: '4px',
-                              color: event.eventType === 'delete' ? '#f43f5e' : event.eventType === 'create' ? '#10b981' : '#eab308'
-                            }}>{event.eventType}</strong>
-                          </span>
-                          <span>{new Date(event.timestamp).toLocaleTimeString()}</span>
+                {tab === 'fim' && (
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+                    {detail.fim.slice(0, 5).map(e => (
+                      <div key={e.id} style={{ padding: '8px 10px', background: 'var(--bg-surface)', borderRadius: 'var(--r-xs)', fontSize: '0.8rem', border: '1px solid var(--border-0)' }}>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.7rem', color: 'var(--text-3)', marginBottom: 2 }}>
+                          <strong style={{ color: e.eventType === 'delete' ? 'var(--critical)' : e.eventType === 'create' ? 'var(--low)' : 'var(--medium)' }}>{e.eventType}</strong>
+                          <span>{new Date(e.timestamp).toLocaleTimeString('en-US', { hour12: false })}</span>
                         </div>
-                        <div style={{ fontFamily: 'JetBrains Mono', color: '#cbd5e1' }}>{event.filePath}</div>
-                        <div style={{ fontSize: '0.7rem', color: '#94a3b8', marginTop: '2px' }}>Process: {event.process} | User: {event.user}</div>
+                        <div style={{ fontFamily: "'IBM Plex Mono', monospace", color: 'var(--text-1)', fontSize: '0.78rem' }}>{e.filePath}</div>
                       </div>
                     ))}
-                    {agentDetail.fim.length === 0 && (
-                      <div style={{ color: '#64748b', fontSize: '0.8rem', textAlign: 'center', padding: '30px 0' }}>
-                        No File Integrity Monitoring events logged.
-                      </div>
-                    )}
+                    {detail.fim.length === 0 && <p style={{ textAlign: 'center', padding: '20px 0', color: 'var(--text-3)', fontSize: '0.8rem' }}>No FIM events</p>}
                   </div>
                 )}
-
-                {activeTab === 'deploy' && (
-                  <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
-                    {/* Linux script */}
-                    <div>
-                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '6px' }}>
-                        <span style={{ fontSize: '0.75rem', fontWeight: 600, color: '#38bdf8', display: 'flex', alignItems: 'center', gap: '4px' }}>
-                          <Terminal size={12} /> Debian/Ubuntu Linux Installation
-                        </span>
-                        <button className="btn btn-outline" onClick={() => copyCommand(linuxInstallCmd, 'linux')} style={{ padding: '2px 6px', fontSize: '0.65rem' }}>
-                          {copiedCmd === 'linux' ? 'Copied!' : 'Copy Script'}
-                        </button>
+                {tab === 'deploy' && (
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+                    {[{ label: 'Linux', cmd: linuxCmd, id: 'lx' }, { label: 'Windows', cmd: winCmd, id: 'win' }].map(i => (
+                      <div key={i.id}>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 4 }}>
+                          <span style={{ fontSize: '0.7rem', fontWeight: 600, color: 'var(--accent)' }}><Terminal size={10} /> {i.label}</span>
+                          <button className="btn btn-outline" onClick={() => copy(i.cmd, i.id)} style={{ padding: '1px 5px', fontSize: '0.6rem' }}>{copied === i.id ? '✓' : 'Copy'}</button>
+                        </div>
+                        <pre style={{ background: 'var(--bg-body)', padding: 8, borderRadius: 'var(--r-xs)', border: '1px solid var(--border-1)', color: 'var(--text-2)', fontSize: '0.68rem', whiteSpace: 'pre-wrap', margin: 0, fontFamily: "'IBM Plex Mono', monospace" }}>{i.cmd}</pre>
                       </div>
-                      <pre style={{
-                        background: '#09090b',
-                        padding: '10px',
-                        borderRadius: '6px',
-                        border: '1px solid hsl(var(--border-muted))',
-                        color: '#cbd5e1',
-                        fontSize: '0.7rem',
-                        whiteSpace: 'pre-wrap',
-                        margin: 0
-                      }}>
-                        {linuxInstallCmd}
-                      </pre>
-                    </div>
-
-                    {/* Windows script */}
-                    <div>
-                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '6px' }}>
-                        <span style={{ fontSize: '0.75rem', fontWeight: 600, color: '#38bdf8', display: 'flex', alignItems: 'center', gap: '4px' }}>
-                          <Terminal size={12} /> Windows PowerShell Installer
-                        </span>
-                        <button className="btn btn-outline" onClick={() => copyCommand(winInstallCmd, 'windows')} style={{ padding: '2px 6px', fontSize: '0.65rem' }}>
-                          {copiedCmd === 'windows' ? 'Copied!' : 'Copy Script'}
-                        </button>
-                      </div>
-                      <pre style={{
-                        background: '#09090b',
-                        padding: '10px',
-                        borderRadius: '6px',
-                        border: '1px solid hsl(var(--border-muted))',
-                        color: '#cbd5e1',
-                        fontSize: '0.7rem',
-                        whiteSpace: 'pre-wrap',
-                        margin: 0
-                      }}>
-                        {winInstallCmd}
-                      </pre>
-                    </div>
+                    ))}
                   </div>
                 )}
               </div>

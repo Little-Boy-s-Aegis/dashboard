@@ -1,435 +1,433 @@
 import { useState, useEffect } from 'react';
-import { Shield, Users, AlertTriangle, RefreshCw, Activity, Terminal, Play, ShieldAlert } from 'lucide-react';
-import type { Agent, Alert, DashboardSummary } from '../types';
+import { Shield, Monitor, AlertTriangle, RefreshCw, Activity, Play, TrendingUp, Cpu } from 'lucide-react';
+import type { Agent, Alert, DashboardSummary, ActionLog } from '../types';
 
-interface DashboardOverviewProps {
+interface Props {
   summary: DashboardSummary | null;
   recentAlerts: Alert[];
   agents: Agent[];
-  onNavigate: (view: string) => void;
+  actions: ActionLog[];
+  timeRange: string;
+  setTimeRange: (val: string) => void;
+  onNavigate: (view: string, mitreId?: string) => void;
   onSimulate: () => void;
 }
 
-export default function DashboardOverview({
-  summary,
-  recentAlerts,
-  agents,
-  onNavigate,
-  onSimulate
-}: DashboardOverviewProps) {
-  const [simulationAgent, setSimulationAgent] = useState('');
-  const [simulationType, setSimulationType] = useState('ransomware');
+export default function DashboardOverview({ summary, recentAlerts, agents, actions, timeRange, setTimeRange, onNavigate, onSimulate }: Props) {
+  const [simAgent, setSimAgent] = useState('');
+  const [simType, setSimType] = useState('ransomware');
   const [simulating, setSimulating] = useState(false);
-  const [simMessage, setSimMessage] = useState('');
+  const [simMsg, setSimMsg] = useState('');
 
-  // Set default agent for simulation when list loads
-  useEffect(() => {
-    if (agents.length > 0 && !simulationAgent) {
-      setSimulationAgent(agents[0].id);
+  useEffect(() => { if (agents.length > 0 && !simAgent) setSimAgent(agents[0].id); }, [agents, simAgent]);
+
+  // Filter alerts by time window
+  const filterByTimeRange = (alertTimestamp: string) => {
+    const alertTime = new Date(alertTimestamp).getTime();
+    const now = new Date().getTime();
+    const diffMinutes = (now - alertTime) / (1000 * 60);
+    switch (timeRange) {
+      case '15m': return diffMinutes <= 15;
+      case '1h':  return diffMinutes <= 60;
+      case '4h':  return diffMinutes <= 240;
+      case '12h': return diffMinutes <= 720;
+      case '24h':
+      default:    return diffMinutes <= 1440;
     }
-  }, [agents, simulationAgent]);
-
-  // Calculate Top Affected Hosts (top 5 hosts with the most active alerts)
-  const getTopAffectedHosts = () => {
-    const counts: Record<string, { name: string; count: number; critical: number; high: number }> = {};
-    
-    recentAlerts.forEach(alert => {
-      if (alert.status === 'resolved') return; // Only count active alerts
-      
-      if (!counts[alert.agentId]) {
-        counts[alert.agentId] = { name: alert.agentName, count: 0, critical: 0, high: 0 };
-      }
-      
-      counts[alert.agentId].count++;
-      if (alert.severity === 'critical') {
-        counts[alert.agentId].critical++;
-      } else if (alert.severity === 'high') {
-        counts[alert.agentId].high++;
-      }
-    });
-
-    return Object.values(counts)
-      .sort((a, b) => b.count - a.count)
-      .slice(0, 5);
   };
 
-  const topAffectedHosts = getTopAffectedHosts();
+  const filteredAlerts = recentAlerts.filter(a => filterByTimeRange(a.timestamp));
+
+  const getHighestSeverityForAgent = (agentId: string) => {
+    const agentAlerts = filteredAlerts.filter(a => a.agentId === agentId && a.status !== 'resolved');
+    if (agentAlerts.length === 0) return 'SAFE';
+    const severities = agentAlerts.map(a => a.severity);
+    if (severities.includes('critical')) return 'CRITICAL';
+    if (severities.includes('high')) return 'HIGH';
+    if (severities.includes('medium')) return 'MEDIUM';
+    return 'LOW';
+  };
+
+  const getSeverityBadgeColor = (sev: string) => {
+    switch (sev) {
+      case 'CRITICAL': return 'badge-critical';
+      case 'HIGH': return 'badge-high';
+      case 'MEDIUM': return 'badge-medium';
+      case 'LOW': return 'badge-low';
+      default: return 'badge-low';
+    }
+  };
+
+  // Dynamic Abnormality Score based on alerts in selected time window
+  const getAbnormalityScore = (agentId: string) => {
+    const agentAlerts = filteredAlerts.filter(a => a.agentId === agentId && a.status !== 'resolved');
+    if (agentAlerts.length === 0) return 5; // base safe score
+    let score = 0;
+    agentAlerts.forEach(a => {
+      if (a.severity === 'critical') score += 40;
+      else if (a.severity === 'high') score += 25;
+      else if (a.severity === 'medium') score += 12;
+      else score += 5;
+    });
+    return Math.min(100, score);
+  };
+
+  const topHosts = (() => {
+    const m: Record<string, { name: string; count: number; critical: number }> = {};
+    filteredAlerts.filter(a => a.status !== 'resolved').forEach(a => {
+      if (!m[a.agentId]) m[a.agentId] = { name: a.agentName, count: 0, critical: 0 };
+      m[a.agentId].count++;
+      if (a.severity === 'critical') m[a.agentId].critical++;
+    });
+    return Object.values(m).sort((a, b) => b.count - a.count).slice(0, 5);
+  })();
 
   const handleSimulate = async () => {
-    if (!simulationAgent) return;
+    if (!simAgent) return;
     setSimulating(true);
-    setSimMessage('Injecting payload...');
+    setSimMsg('Injecting...');
     try {
-      const response = await fetch('/api/simulate', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          agentId: simulationAgent,
-          type: simulationType,
-        }),
+      const res = await fetch('/api/simulate', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ agentId: simAgent, type: simType })
       });
-      if (response.ok) {
-        const data = await response.json();
-        setSimMessage(`Alert triggered: ${data.alert.title}`);
-        onSimulate(); // Refresh data
-        setTimeout(() => setSimMessage(''), 4000);
-      } else {
-        setSimMessage('Simulation injection failed');
-        setTimeout(() => setSimMessage(''), 3000);
-      }
-    } catch (e) {
-      setSimMessage('Error communicating with simulator');
-      setTimeout(() => setSimMessage(''), 3000);
-    } finally {
-      setSimulating(false);
-    }
+      if (res.ok) { const d = await res.json(); setSimMsg(`✓ ${d.alert.title}`); onSimulate(); }
+      else setSimMsg('✗ Failed');
+    } catch { setSimMsg('✗ Error'); }
+    finally { setSimulating(false); setTimeout(() => setSimMsg(''), 4000); }
   };
 
-  const getThreatColor = (level: string) => {
-    switch (level) {
-      case 'Severe': return '#f43f5e';
-      case 'Elevated': return '#f97316';
-      default: return '#10b981';
-    }
-  };
+  const threatColor = (l: string) => l === 'Severe' ? 'var(--critical)' : l === 'Elevated' ? 'var(--high)' : 'var(--low)';
 
-  // Predefined key MITRE Techniques we track
-  const trackedTechniques = [
+  const techniques = [
     { id: 'T1110', name: 'Brute Force' },
-    { id: 'T1059', name: 'PowerShell / CMD' },
+    { id: 'T1059', name: 'Command & Script' },
     { id: 'T1078', name: 'Valid Accounts' },
-    { id: 'T1485', name: 'Shadow Copy Del' },
-    { id: 'T1003', name: 'Lsass Dump' },
-    { id: 'T1046', name: 'Port Scan' },
-    { id: 'T1168', name: 'Cron Job Mod' },
-    { id: 'T1071', name: 'C2 Traffic' },
+    { id: 'T1485', name: 'Data Destruction' },
+    { id: 'T1003', name: 'Credential Dump' },
+    { id: 'T1046', name: 'Network Scan' },
+    { id: 'T1168', name: 'Scheduled Task' },
+    { id: 'T1071', name: 'App Layer Proto' },
   ];
 
+  const Bar = ({ value, max, color }: { value: number; max: number; color: string }) => (
+    <div style={{ width: '100%', height: 3, background: 'var(--border-0)', borderRadius: 1 }}>
+      <div style={{ width: `${(value / max) * 100}%`, height: '100%', background: color, borderRadius: 1, transition: 'width 0.3s' }} />
+    </div>
+  );
+
   return (
-    <div style={{ animation: 'flashNew 0.5s ease-out' }}>
+    <div style={{ animation: 'fadeInUp 0.25s ease-out' }}>
       <div className="page-header">
         <div>
           <h1 className="page-title">SOC Overview</h1>
-          <p className="page-subtitle">Real-time enterprise threat monitoring and AI triage console</p>
+          <p className="page-subtitle">Real-time threat monitoring and triage console</p>
         </div>
-        <div style={{ display: 'flex', gap: '8px' }}>
-          <button className="btn btn-outline" onClick={onSimulate} style={{ gap: '6px' }}>
-            <RefreshCw size={14} /> Refresh Feed
-          </button>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+          <select 
+            className="select-input" 
+            value={timeRange} 
+            onChange={e => setTimeRange(e.target.value)} 
+            style={{ minWidth: 80, padding: '4px 8px', fontSize: '0.78rem', height: 28 }}
+          >
+            <option value="15m">15m</option>
+            <option value="1h">1h</option>
+            <option value="4h">4h</option>
+            <option value="12h">12h</option>
+            <option value="24h">24h</option>
+          </select>
+          <button className="btn btn-outline" onClick={onSimulate} style={{ height: 28 }}><RefreshCw size={12} /> Refresh</button>
         </div>
       </div>
 
-      {/* KPI Cards */}
+      {/* KPI Strip */}
       <div className="kpi-grid">
-        <div className={`glass-panel kpi-card ${summary?.threatLevel === 'Severe' ? 'threat-severe' : summary?.threatLevel === 'Elevated' ? 'threat-elevated' : 'threat-normal'}`}>
-          <div className="kpi-header">
-            <span className="kpi-title">Threat Level</span>
-            <Shield size={18} style={{ color: getThreatColor(summary?.threatLevel || 'Normal') }} />
-          </div>
-          <div className="kpi-value" style={{ color: getThreatColor(summary?.threatLevel || 'Normal') }}>
-            {summary?.threatLevel || 'Normal'}
-          </div>
-          <div className="kpi-trend">
-            <span style={{ color: '#94a3b8' }}>System status: operational</span>
+        <div className="glass-panel kpi-card">
+          <div className="kpi-header"><span className="kpi-title">Threat Level</span><Shield size={14} style={{ color: threatColor(summary?.threatLevel || 'Normal'), opacity: 0.6 }} /></div>
+          <div className="kpi-value" style={{ color: threatColor(summary?.threatLevel || 'Normal') }}>{summary?.threatLevel || '—'}</div>
+          <div className="kpi-trend">System operational</div>
+        </div>
+        <div className="glass-panel kpi-card">
+          <div className="kpi-header"><span className="kpi-title">Monitored Hosts</span><Monitor size={14} style={{ color: 'var(--accent)', opacity: 0.6 }} /></div>
+          <div className="kpi-value">{summary?.activeAgents || 0}<span style={{ fontSize: '0.85rem', color: 'var(--text-3)', fontWeight: 400 }}>/{summary?.totalAgents || 0}</span></div>
+          <div className="kpi-trend" style={{ color: 'var(--low)' }}>● {summary?.activeAgents || 0} reporting</div>
+        </div>
+        <div className="glass-panel kpi-card">
+          <div className="kpi-header"><span className="kpi-title">Incidents (24h)</span><AlertTriangle size={14} style={{ color: (summary?.criticalAlerts || 0) > 0 ? 'var(--critical)' : 'var(--text-3)', opacity: 0.6 }} /></div>
+          <div className="kpi-value" style={{ color: (summary?.criticalAlerts || 0) > 0 ? 'var(--critical)' : undefined }}>{summary?.alertCount24h || 0}</div>
+          <div className="kpi-trend"><span style={{ color: 'var(--critical-dim)' }}>{summary?.criticalAlerts || 0} crit</span> · {summary?.highAlerts || 0} high</div>
+        </div>
+        <div className="glass-panel kpi-card">
+          <div className="kpi-header"><span className="kpi-title">MITRE Coverage</span><TrendingUp size={14} style={{ color: 'var(--purple)', opacity: 0.6 }} /></div>
+          <div className="kpi-value">{summary ? Object.keys(summary.mitreCoverage).length : 0}</div>
+          <div className="kpi-trend">Active techniques</div>
+        </div>
+      </div>
+
+      {/* Abnormality & Orchestrator Panels */}
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1.2fr', gap: 12, marginBottom: 14 }}>
+        {/* Left: Abnormality Status */}
+        <div className="glass-panel" style={{ padding: 14, display: 'flex', flexDirection: 'column', gap: 8 }}>
+          <h3 style={{ fontSize: '0.82rem', display: 'flex', alignItems: 'center', gap: 6, color: 'var(--text-0)' }}>
+            <TrendingUp size={13} style={{ color: 'var(--accent)' }} /> Agent Abnormality Status
+          </h3>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 8, flex: 1, justifyContent: 'center' }}>
+            {[
+              agents.find(a => a.id === 'agent-01') || agents[0],
+              agents.find(a => a.id === 'agent-02') || agents[1],
+              agents.find(a => a.id === 'agent-03') || agents[2]
+            ].filter(Boolean).map((agent, idx) => {
+              const highestSev = getHighestSeverityForAgent(agent.id);
+              return (
+                <div key={agent.id} style={{
+                  padding: '8px 12px', background: 'var(--bg-surface)', border: '1px solid var(--border-0)',
+                  borderRadius: 'var(--r-xs)', display: 'flex', flexDirection: 'column', gap: 4
+                }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                    <span style={{ fontWeight: 600, color: 'var(--text-0)', fontSize: '0.78rem' }}>
+                      A{idx + 1}: {agent.name}
+                    </span>
+                    <span className={`badge ${getSeverityBadgeColor(highestSev)}`} style={{ fontSize: '0.58rem', padding: '1px 4px' }}>{highestSev}</span>
+                  </div>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                    <span style={{ fontSize: '0.7rem', color: 'var(--text-3)' }}>Abnormality:</span>
+                    <div style={{ flex: 1, height: 4, background: 'rgba(255,255,255,0.05)', borderRadius: 2 }}>
+                      <div style={{
+                        width: `${getAbnormalityScore(agent.id)}%`, height: '100%',
+                        background: getAbnormalityScore(agent.id) > 70 ? 'var(--critical)' : getAbnormalityScore(agent.id) > 40 ? 'var(--high)' : 'var(--low)',
+                        borderRadius: 2
+                      }} />
+                    </div>
+                    <span style={{ fontSize: '0.72rem', fontWeight: 600, color: 'var(--text-1)', width: 28, textAlign: 'right' }}>{getAbnormalityScore(agent.id)}%</span>
+                  </div>
+                </div>
+              );
+            })}
           </div>
         </div>
 
-        <div className="glass-panel kpi-card">
-          <div className="kpi-header">
-            <span className="kpi-title">Monitored Hosts</span>
-            <Users size={18} style={{ color: '#38bdf8' }} />
-          </div>
-          <div className="kpi-value">
-            {summary?.activeAgents || 0}
-            <span style={{ fontSize: '1rem', color: '#64748b', fontWeight: 500 }}> / {summary?.totalAgents || 0}</span>
-          </div>
-          <div className="kpi-trend">
-            <span style={{ color: '#34d399' }}>● {summary?.activeAgents || 0} active agents</span>
-          </div>
-        </div>
+        {/* Right: Security Orchestrator Table */}
+        <div className="glass-panel" style={{ padding: 14 }}>
+          <h3 style={{ fontSize: '0.82rem', display: 'flex', alignItems: 'center', gap: 6, color: 'var(--text-0)', marginBottom: 8 }}>
+            <Cpu size={13} style={{ color: 'var(--info)' }} /> Security Orchestrator status
+          </h3>
+          <div className="table-container" style={{ maxHeight: 135, overflowY: 'auto' }}>
+            <table className="sec-table" style={{ width: '100%', fontSize: '0.78rem' }}>
+              <thead>
+                <tr>
+                  <th>Agent</th>
+                  <th style={{ textAlign: 'center' }}>Critical</th>
+                  <th style={{ textAlign: 'center' }}>High</th>
+                  <th style={{ textAlign: 'center' }}>Medium</th>
+                  <th style={{ textAlign: 'center' }}>Low</th>
+                  <th>Mitigation</th>
+                </tr>
+              </thead>
+              <tbody>
+                {agents.map(a => {
+                  const cCount = filteredAlerts.filter(x => x.agentId === a.id && x.severity === 'critical' && x.status !== 'resolved').length;
+                  const hCount = filteredAlerts.filter(x => x.agentId === a.id && x.severity === 'high' && x.status !== 'resolved').length;
+                  const mCount = filteredAlerts.filter(x => x.agentId === a.id && x.severity === 'medium' && x.status !== 'resolved').length;
+                  const lCount = filteredAlerts.filter(x => x.agentId === a.id && x.severity === 'low' && x.status !== 'resolved').length;
+                  
+                  let statusColor = 'var(--low)';
+                  let statusLabel = 'SECURED';
+                  if (a.status === 'disconnected') {
+                    statusColor = 'var(--text-3)';
+                    statusLabel = 'ISOLATED';
+                  } else if (cCount > 0) {
+                    statusColor = 'var(--critical)';
+                    statusLabel = 'CONTAINING';
+                  } else if (hCount > 0) {
+                    statusColor = 'var(--high)';
+                    statusLabel = 'ATTACKED';
+                  } else if (mCount > 0 || lCount > 0) {
+                    statusColor = 'var(--medium)';
+                    statusLabel = 'MONITOR';
+                  }
 
-        <div className="glass-panel kpi-card">
-          <div className="kpi-header">
-            <span className="kpi-title">Incidents (24h)</span>
-            <AlertTriangle size={18} style={{ color: '#fb7185' }} />
-          </div>
-          <div className="kpi-value" style={{ color: (summary?.criticalAlerts || 0) > 0 ? '#fb7185' : 'inherit' }}>
-            {summary?.alertCount24h || 0}
-          </div>
-          <div className="kpi-trend">
-            <span style={{ color: '#fb7185', fontWeight: 600 }}>{summary?.criticalAlerts || 0} Critical</span>
-            <span style={{ color: '#94a3b8' }}> • {summary?.highAlerts || 0} High</span>
-          </div>
-        </div>
-
-        <div className="glass-panel kpi-card">
-          <div className="kpi-header">
-            <span className="kpi-title">MITRE Technique Hits</span>
-            <Activity size={18} style={{ color: '#a78bfa' }} />
-          </div>
-          <div className="kpi-value">
-            {summary ? Object.keys(summary.mitreCoverage).length : 0}
-          </div>
-          <div className="kpi-trend">
-            <span style={{ color: '#c084fc' }}>Active techniques coverage</span>
+                  return (
+                    <tr key={a.id}>
+                      <td style={{ fontWeight: 600, padding: '4px 8px' }}>{a.name}</td>
+                      <td style={{ textAlign: 'center', color: cCount > 0 ? 'var(--critical)' : 'var(--text-3)', fontWeight: cCount > 0 ? 600 : 400, padding: '4px 8px' }}>{cCount}</td>
+                      <td style={{ textAlign: 'center', color: hCount > 0 ? 'var(--high)' : 'var(--text-3)', fontWeight: hCount > 0 ? 600 : 400, padding: '4px 8px' }}>{hCount}</td>
+                      <td style={{ textAlign: 'center', color: mCount > 0 ? 'var(--medium)' : 'var(--text-3)', fontWeight: mCount > 0 ? 600 : 400, padding: '4px 8px' }}>{mCount}</td>
+                      <td style={{ textAlign: 'center', color: lCount > 0 ? 'var(--low)' : 'var(--text-3)', fontWeight: lCount > 0 ? 600 : 400, padding: '4px 8px' }}>{lCount}</td>
+                      <td style={{ padding: '4px 8px' }}>
+                        <span style={{ fontSize: '0.68rem', fontWeight: 600, color: statusColor, display: 'flex', alignItems: 'center', gap: 3 }}>
+                          <span style={{ width: 4, height: 4, background: statusColor, borderRadius: '50%' }} />
+                          {statusLabel}
+                        </span>
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
           </div>
         </div>
       </div>
 
-      {/* Main Section */}
-      <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr', gap: '24px', marginBottom: '28px' }}>
-        
-        {/* Left Column - Chart & MITRE */}
-        <div style={{ display: 'flex', flexDirection: 'column', gap: '24px' }}>
-          
-          {/* Custom SVG Chart */}
-          <div className="glass-panel" style={{ padding: '24px' }}>
-            <h3 style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-              <Activity size={18} style={{ color: '#38bdf8' }} /> Alert Volume Trend (Last 24h)
-            </h3>
-            <div className="svg-chart-container">
-              <svg width="100%" height="220" viewBox="0 0 500 200" preserveAspectRatio="none">
+      <div style={{ display: 'grid', gridTemplateColumns: '1.7fr 1fr', gap: 12 }}>
+        {/* Left Column */}
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+          {/* Chart */}
+          <div className="glass-panel" style={{ padding: 16 }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 4 }}>
+              <h3 style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: '0.85rem' }}>
+                <Activity size={13} style={{ color: 'var(--info)' }} /> Alert Volume
+              </h3>
+              <span style={{ fontSize: '0.68rem', color: 'var(--text-3)', fontFamily: "'IBM Plex Mono', monospace" }}>24h</span>
+            </div>
+            <div className="svg-chart-container" style={{ position: 'relative' }}>
+              <svg width="100%" height="180" viewBox="0 0 500 180" preserveAspectRatio="none">
                 <defs>
                   <linearGradient id="area-gradient" x1="0" y1="0" x2="0" y2="1">
-                    <stop offset="0%" stopColor="#38bdf8" stopOpacity="0.4" />
-                    <stop offset="100%" stopColor="#38bdf8" stopOpacity="0" />
-                  </linearGradient>
-                  <linearGradient id="chart-gradient" x1="0" y1="0" x2="1" y2="0">
-                    <stop offset="0%" stopColor="#6366f1" />
-                    <stop offset="50%" stopColor="#38bdf8" />
-                    <stop offset="100%" stopColor="#34d399" />
+                    <stop offset="0%" stopColor="var(--accent)" stopOpacity="0.15" />
+                    <stop offset="100%" stopColor="var(--accent)" stopOpacity="0" />
                   </linearGradient>
                 </defs>
-                
-                {/* Grid Lines */}
-                <line x1="0" y1="50" x2="500" y2="50" className="chart-grid-line" />
-                <line x1="0" y1="100" x2="500" y2="100" className="chart-grid-line" />
-                <line x1="0" y1="150" x2="500" y2="150" className="chart-grid-line" />
-                
-                {/* Chart Path */}
+                <line x1="0" y1="45" x2="500" y2="45" className="chart-grid-line" />
+                <line x1="0" y1="90" x2="500" y2="90" className="chart-grid-line" />
+                <line x1="0" y1="135" x2="500" y2="135" className="chart-grid-line" />
                 {recentAlerts.length > 0 ? (
                   <>
-                    <path
-                      d={`M 0 170 Q 100 130, 200 160 T 400 80 T 500 ${180 - (summary?.criticalAlerts ? summary.criticalAlerts * 25 : 10)}`}
-                      className="chart-line"
-                    />
-                    <path
-                      d={`M 0 170 Q 100 130, 200 160 T 400 80 T 500 ${180 - (summary?.criticalAlerts ? summary.criticalAlerts * 25 : 10)} L 500 200 L 0 200 Z`}
-                      className="chart-area"
-                    />
+                    <path d={`M 0 155 Q 80 130, 160 145 T 320 80 T 500 ${165 - (summary?.criticalAlerts ? summary.criticalAlerts * 20 : 8)}`} className="chart-line" />
+                    <path d={`M 0 155 Q 80 130, 160 145 T 320 80 T 500 ${165 - (summary?.criticalAlerts ? summary.criticalAlerts * 20 : 8)} L 500 180 L 0 180 Z`} className="chart-area" fill="url(#area-gradient)" />
                   </>
-                ) : (
-                  <path d="M 0 180 L 500 180" className="chart-line" />
-                )}
-                
-                {/* X Axis labels */}
-                <text x="10" y="195" className="chart-axis-text">24h ago</text>
-                <text x="160" y="195" className="chart-axis-text">16h ago</text>
-                <text x="320" y="195" className="chart-axis-text">8h ago</text>
-                <text x="460" y="195" className="chart-axis-text">Now</text>
+                ) : <path d="M 0 165 L 500 165" className="chart-line" />}
+                <text x="5" y="175" className="chart-axis-text">24h ago</text>
+                <text x="155" y="175" className="chart-axis-text">16h</text>
+                <text x="310" y="175" className="chart-axis-text">8h</text>
+                <text x="465" y="175" className="chart-axis-text">Now</text>
               </svg>
             </div>
           </div>
 
-          {/* MITRE ATT&CK Heatmap */}
-          <div className="glass-panel" style={{ padding: '24px' }}>
-            <h3 style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-              <Shield size={18} style={{ color: '#a78bfa' }} /> MITRE ATT&CK Technique Mapping
+          {/* MITRE Grid */}
+          <div className="glass-panel" style={{ padding: 16 }}>
+            <h3 style={{ fontSize: '0.85rem', display: 'flex', alignItems: 'center', gap: 6 }}>
+              <Shield size={13} style={{ color: 'var(--purple)' }} /> MITRE ATT&CK
             </h3>
-            <p style={{ fontSize: '0.8rem', color: '#94a3b8', marginTop: '4px' }}>
-              Highlights indicate mapped alarms triggering active MITRE techniques.
-            </p>
+            <p style={{ fontSize: '0.72rem', color: 'var(--text-3)', margin: '3px 0 0' }}>Click active techniques to filter alerts.</p>
             <div className="mitre-grid-container">
-              {trackedTechniques.map((tech) => {
-                // Find if this technique is active in summary
-                const count = summary?.mitreCoverage[tech.id] || 0;
-                const isActive = count > 0;
+              {techniques.map(t => {
+                const c = summary?.mitreCoverage[t.id] || 0;
+                const active = c > 0;
                 return (
-                  <div key={tech.id} className={`mitre-cell ${isActive ? 'active-coverage' : ''}`}>
-                    <span className="mitre-cell-tech" style={{ color: isActive ? '#38bdf8' : '' }}>
-                      {tech.id}
-                    </span>
-                    <div className="mitre-cell-title" title={tech.name}>{tech.name}</div>
-                    {isActive && <div className="mitre-cell-count">{count} {count === 1 ? 'alert' : 'alerts'}</div>}
+                  <div key={t.id} className={`mitre-cell ${active ? 'active-coverage' : ''}`}
+                    onClick={() => { if (active) onNavigate('alerts', t.id); }}
+                    style={{ cursor: active ? 'pointer' : 'default' }}>
+                    <span className="mitre-cell-tech" style={{ color: active ? 'var(--info)' : undefined }}>{t.id}</span>
+                    <div className="mitre-cell-title" title={t.name}>{t.name}</div>
+                    {active && <div className="mitre-cell-count">{c}</div>}
                   </div>
                 );
               })}
+            </div>
+          </div>
+
+          {/* AI Autonomous Defense Log */}
+          <div className="glass-panel" style={{ padding: 16 }}>
+            <h3 style={{ fontSize: '0.85rem', display: 'flex', alignItems: 'center', gap: 6, color: 'var(--accent)' }}>
+              <Cpu size={13} /> AI Autonomous Defense Log
+            </h3>
+            <p style={{ fontSize: '0.72rem', color: 'var(--text-3)', margin: '3px 0 8px' }}>Active automated containment and response logs</p>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+              {actions.filter(act => act.actor === 'AI Agent').slice(0, 4).map(act => (
+                <div key={act.id} style={{
+                  padding: '8px 10px', background: 'var(--bg-surface)', border: '1px solid var(--border-0)',
+                  borderRadius: 'var(--r-xs)', fontSize: '0.76rem', display: 'flex', flexDirection: 'column', gap: 2
+                }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.68rem', color: 'var(--text-3)' }}>
+                    <span style={{ color: 'var(--accent-dim)', fontWeight: 600 }}>{act.actionType}</span>
+                    <span>{new Date(act.timestamp).toLocaleTimeString('en-US', { hour12: false })}</span>
+                  </div>
+                  <div style={{ color: 'var(--text-1)' }}>Target: <code style={{ fontSize: '0.72rem', color: 'var(--text-0)' }}>{act.target}</code></div>
+                  <div style={{ fontSize: '0.72rem', color: 'var(--text-2)', marginTop: 2, borderLeft: '2px solid var(--accent)', paddingLeft: 6, fontStyle: 'italic' }}>
+                    {act.message}
+                  </div>
+                </div>
+              ))}
+              {actions.filter(act => act.actor === 'AI Agent').length === 0 && (
+                <p style={{ textAlign: 'center', padding: '12px 0', color: 'var(--text-3)', fontSize: '0.78rem' }}>No AI mitigations triggered yet.</p>
+              )}
             </div>
           </div>
         </div>
 
-        {/* Right Column - Simulator & Feed */}
-        <div style={{ display: 'flex', flexDirection: 'column', gap: '24px' }}>
-          
-          {/* Top Affected Hosts Widget */}
-          <div className="glass-panel" style={{ padding: '24px', border: '1px solid rgba(244, 63, 94, 0.25)', boxShadow: '0 0 15px rgba(244, 63, 94, 0.05)' }}>
-            <h3 style={{ display: 'flex', alignItems: 'center', gap: '8px', color: '#fb7185' }}>
-              <ShieldAlert size={18} /> Top Affected Hosts
-            </h3>
-            <p style={{ fontSize: '0.8rem', color: '#94a3b8', marginTop: '4px', marginBottom: '16px' }}>
-              Endpoints with active anomalies requiring triage.
-            </p>
-            
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
-              {topAffectedHosts.map((host) => {
-                const maxAlerts = Math.max(...topAffectedHosts.map(h => h.count), 1);
-                const percent = (host.count / maxAlerts) * 100;
-                const hasCritical = host.critical > 0;
-                
+        {/* Right Column */}
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+          {/* Top Affected */}
+          <div className="glass-panel" style={{ padding: 16 }}>
+            <h3 style={{ fontSize: '0.85rem', color: 'var(--critical-dim)', marginBottom: 10 }}>Top Affected Hosts</h3>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+              {topHosts.map(h => {
+                const maxC = Math.max(...topHosts.map(x => x.count), 1);
                 return (
-                  <div key={host.name} style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
-                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: '0.85rem' }}>
-                      <span style={{ fontWeight: 600, color: '#f1f5f9' }}>{host.name}</span>
-                      <div style={{ display: 'flex', gap: '6px', alignItems: 'center' }}>
-                        {host.critical > 0 && (
-                          <span className="badge badge-critical" style={{ fontSize: '0.65rem', padding: '1px 6px' }}>
-                            {host.critical} Critical
-                          </span>
-                        )}
-                        <span style={{ fontSize: '0.8rem', color: '#94a3b8', fontWeight: 'bold' }}>
-                          {host.count} {host.count === 1 ? 'Alert' : 'Alerts'}
-                        </span>
-                      </div>
+                  <div key={h.name}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.82rem', marginBottom: 3 }}>
+                      <span style={{ color: 'var(--text-0)', fontWeight: 600 }}>{h.name}</span>
+                      <span style={{ color: 'var(--text-3)', fontFamily: "'IBM Plex Mono', monospace", fontSize: '0.78rem' }}>
+                        {h.critical > 0 && <span style={{ color: 'var(--critical-dim)', marginRight: 6 }}>{h.critical} crit</span>}
+                        {h.count}
+                      </span>
                     </div>
-                    <div style={{ width: '100%', height: '5px', background: 'rgba(255,255,255,0.06)', borderRadius: '3px', overflow: 'hidden' }}>
-                      <div style={{
-                        width: `${percent}%`,
-                        height: '100%',
-                        background: hasCritical ? 'linear-gradient(90deg, #f43f5e, #fb7185)' : 'linear-gradient(90deg, #f97316, #ff983f)',
-                        boxShadow: hasCritical ? '0 0 8px rgba(244, 63, 94, 0.4)' : 'none',
-                        borderRadius: '3px',
-                        transition: 'all 0.5s ease'
-                      }} />
-                    </div>
+                    <Bar value={h.count} max={maxC} color={h.critical > 0 ? 'var(--critical)' : 'var(--high)'} />
                   </div>
                 );
               })}
-
-              {topAffectedHosts.length === 0 && (
-                <div style={{ color: '#64748b', fontSize: '0.8rem', textAlign: 'center', padding: '12px 0' }}>
-                  No active incidents detected.
-                </div>
-              )}
+              {topHosts.length === 0 && <p style={{ textAlign: 'center', padding: '16px 0', color: 'var(--text-3)', fontSize: '0.82rem' }}>No active incidents</p>}
             </div>
           </div>
 
-          {/* Attack Simulator Panel */}
-          <div className="glass-panel" style={{ padding: '24px', border: '1px solid rgba(56, 189, 248, 0.15)' }}>
-            <h3 style={{ display: 'flex', alignItems: 'center', gap: '8px', color: '#38bdf8' }}>
-              <Play size={18} /> Cyberattack Simulator
-            </h3>
-            <p style={{ fontSize: '0.8rem', color: '#94a3b8', marginTop: '4px', marginBottom: '16px' }}>
-              Trigger mock security incidents to inspect SIEM response and AI analysis.
-            </p>
-            
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
-              <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
-                <label style={{ fontSize: '0.75rem', color: '#94a3b8', fontWeight: 600 }}>TARGET HOST</label>
-                <select 
-                  className="select-input" 
-                  value={simulationAgent}
-                  onChange={(e) => setSimulationAgent(e.target.value)}
-                  style={{ width: '100%', background: '#1c1c24' }}
-                >
-                  {agents.map((agent) => (
-                    <option key={agent.id} value={agent.id}>{agent.name} ({agent.ip})</option>
-                  ))}
-                </select>
-              </div>
-
-              <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
-                <label style={{ fontSize: '0.75rem', color: '#94a3b8', fontWeight: 600 }}>ATTACK VECTOR</label>
-                <select 
-                  className="select-input" 
-                  value={simulationType}
-                  onChange={(e) => setSimulationType(e.target.value)}
-                  style={{ width: '100%', background: '#1c1c24' }}
-                >
-                  <option value="ransomware">Ransomware (VSS Wiping & Encryption)</option>
-                  <option value="bruteforce">SSH Brute Force (T1110)</option>
-                  <option value="malware">Credentials Dumping (Lsass Mimikatz)</option>
-                </select>
-              </div>
-
-              <button 
-                className="btn btn-primary" 
-                onClick={handleSimulate} 
-                disabled={simulating || !simulationAgent}
-                style={{ width: '100%', marginTop: '8px', gap: '8px' }}
-              >
-                <Terminal size={16} /> {simulating ? 'Injecting Payload...' : 'Launch Simulation'}
+          {/* Simulator */}
+          <div className="glass-panel" style={{ padding: 16 }}>
+            <h3 style={{ fontSize: '0.85rem', color: 'var(--accent-dim)', marginBottom: 10 }}>Attack Simulator</h3>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+              <label style={{ fontSize: '0.65rem', color: 'var(--text-3)', fontWeight: 600, letterSpacing: '0.06em', textTransform: 'uppercase' }}>Target</label>
+              <select className="select-input" value={simAgent} onChange={e => setSimAgent(e.target.value)} style={{ width: '100%' }}>
+                {agents.map(a => <option key={a.id} value={a.id}>{a.name} ({a.ip})</option>)}
+              </select>
+              <label style={{ fontSize: '0.65rem', color: 'var(--text-3)', fontWeight: 600, letterSpacing: '0.06em', textTransform: 'uppercase' }}>Vector</label>
+              <select className="select-input" value={simType} onChange={e => setSimType(e.target.value)} style={{ width: '100%' }}>
+                <option value="ransomware">Ransomware (VSS Delete)</option>
+                <option value="bruteforce">SSH Brute Force (T1110)</option>
+                <option value="malware">Credential Dump (Mimikatz)</option>
+              </select>
+              <button className="btn btn-primary" onClick={handleSimulate} disabled={simulating || !simAgent} style={{ width: '100%', marginTop: 4 }}>
+                <Play size={12} /> {simulating ? 'Injecting...' : 'Launch'}
               </button>
-
-              {simMessage && (
-                <div style={{
-                  padding: '10px',
-                  borderRadius: '6px',
-                  background: 'rgba(56, 189, 248, 0.08)',
-                  border: '1px solid rgba(56, 189, 248, 0.2)',
-                  fontSize: '0.75rem',
-                  color: '#38bdf8',
-                  fontFamily: 'JetBrains Mono, monospace',
-                  animation: 'flashNew 0.5s ease-out'
-                }}>
-                  {simMessage}
-                </div>
-              )}
+              {simMsg && <div style={{ padding: '8px 10px', background: 'var(--accent-bg)', border: '1px solid rgba(59,130,246,0.2)', fontSize: '0.78rem', color: 'var(--accent-dim)', fontFamily: "'IBM Plex Mono', monospace", borderRadius: 'var(--r-xs)', animation: 'fadeInUp 0.2s' }}>{simMsg}</div>}
             </div>
           </div>
 
-          {/* Live Security Alarms Feed */}
-          <div className="glass-panel" style={{ padding: '24px', flex: 1, display: 'flex', flexDirection: 'column' }}>
-            <h3 style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '16px' }}>
-              <AlertTriangle size={18} style={{ color: '#fb7185' }} /> Recent Security Alarms
-            </h3>
-            
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '12px', flex: 1 }}>
-              {recentAlerts.slice(0, 5).map((alert) => (
-                <div 
-                  key={alert.id} 
-                  onClick={() => onNavigate('alerts')}
-                  style={{
-                    padding: '12px',
-                    borderRadius: '8px',
-                    background: 'rgba(255,255,255,0.02)',
-                    border: '1px solid rgba(255,255,255,0.04)',
-                    cursor: 'pointer',
-                    transition: 'all 0.2s',
-                    position: 'relative'
-                  }}
-                  className="hover-card"
-                >
-                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '6px' }}>
-                    <span className={`badge badge-${alert.severity}`} style={{ fontSize: '0.65rem', padding: '2px 8px' }}>
-                      {alert.severity}
-                    </span>
-                    <span style={{ fontSize: '0.7rem', color: '#64748b' }}>
-                      {new Date(alert.timestamp).toLocaleTimeString()}
-                    </span>
+          {/* Recent Alerts */}
+          <div className="glass-panel" style={{ padding: 16, flex: 1, display: 'flex', flexDirection: 'column' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 10 }}>
+              <h3 style={{ fontSize: '0.85rem' }}>Recent Alerts</h3>
+              <span style={{ fontSize: '0.65rem', color: 'var(--text-3)', fontFamily: "'IBM Plex Mono', monospace" }}>LIVE</span>
+            </div>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 4, flex: 1 }}>
+              {filteredAlerts.slice(0, 6).map(a => (
+                <div key={a.id} onClick={() => onNavigate('alerts')} className="hover-card" style={{
+                  padding: '8px 10px', borderRadius: 'var(--r-xs)', cursor: 'pointer',
+                  border: '1px solid var(--border-0)', transition: 'all 0.1s'
+                }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.72rem', marginBottom: 2 }}>
+                    <span className={`badge badge-${a.severity}`}>{a.severity}</span>
+                    <span style={{ color: 'var(--text-3)', fontFamily: "'IBM Plex Mono', monospace" }}>{new Date(a.timestamp).toLocaleTimeString('en-US', { hour12: false })}</span>
                   </div>
-                  <div style={{ fontWeight: 600, fontSize: '0.85rem', color: '#f1f5f9' }}>{alert.title}</div>
-                  <div style={{ fontSize: '0.75rem', color: '#94a3b8', marginTop: '2px' }}>Host: {alert.agentName}</div>
+                  <div style={{ fontSize: '0.82rem', fontWeight: 600, color: 'var(--text-0)' }}>{a.title}</div>
+                  <div style={{ fontSize: '0.72rem', color: 'var(--text-3)' }}>{a.agentName}</div>
                 </div>
               ))}
-
-              {recentAlerts.length === 0 && (
-                <div style={{ color: '#64748b', fontSize: '0.85rem', textAlign: 'center', padding: '40px 0', flex: 1 }}>
-                  No security incidents recorded in the last 24h.
-                </div>
-              )}
+              {filteredAlerts.length === 0 && <p style={{ textAlign: 'center', padding: '24px 0', color: 'var(--text-3)' }}>No incidents</p>}
             </div>
-
-            <button 
-              className="btn btn-outline" 
-              onClick={() => onNavigate('alerts')}
-              style={{ width: '100%', marginTop: '16px', fontSize: '0.8rem' }}
-            >
-              Open Alerts Incident Manager
+            <button className="btn btn-outline" onClick={() => onNavigate('alerts')} style={{ width: '100%', marginTop: 8, fontSize: '0.78rem' }}>
+              Open Incident Manager →
             </button>
           </div>
-
         </div>
       </div>
     </div>

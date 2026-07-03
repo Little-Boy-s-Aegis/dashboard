@@ -1,160 +1,92 @@
 import { useState, useEffect } from 'react';
-import { Search, RefreshCw, Terminal, AlertCircle } from 'lucide-react';
+import { Search, RefreshCw, Terminal, BarChart3, ChevronDown, ChevronRight } from 'lucide-react';
 import type { LogEntry } from '../types';
 
-interface LogExplorerProps {
-  onRefresh: () => void;
-}
+interface Props { onRefresh: () => void; }
+interface Bucket { time: string; count: number; }
 
-interface HistogramBucket {
-  time: string;
-  count: number;
-}
-
-export default function LogExplorer({ onRefresh }: LogExplorerProps) {
+export default function LogExplorer({ onRefresh }: Props) {
   const [logs, setLogs] = useState<LogEntry[]>([]);
-  const [histogram, setHistogram] = useState<HistogramBucket[]>([]);
-  const [searchQuery, setSearchQuery] = useState('');
-  const [facilityFilter, setFacilityFilter] = useState('');
-  const [debouncedQuery, setDebouncedQuery] = useState('');
+  const [hist, setHist] = useState<Bucket[]>([]);
+  const [query, setQuery] = useState('');
+  const [facility, setFacility] = useState('');
+  const [dq, setDq] = useState('');
   const [loading, setLoading] = useState(false);
+  const [expanded, setExpanded] = useState<Set<string>>(new Set());
 
-  // Debounce search query to avoid spamming requests
-  useEffect(() => {
-    const timer = setTimeout(() => {
-      setDebouncedQuery(searchQuery);
-    }, 3000); // 300ms debounce
-    return () => clearTimeout(timer);
-  }, [searchQuery]);
+  const toggle = (id: string) => setExpanded(p => { const n = new Set(p); n.has(id) ? n.delete(id) : n.add(id); return n; });
 
-  // Fetch logs and histogram
-  const fetchLogsData = () => {
+  useEffect(() => { const t = setTimeout(() => setDq(query), 300); return () => clearTimeout(t); }, [query]);
+
+  const fetchLogs = () => {
     setLoading(true);
-    const queryParams = new URLSearchParams();
-    if (debouncedQuery) queryParams.append('q', debouncedQuery);
-    if (facilityFilter) queryParams.append('facility', facilityFilter);
-
-    fetch(`/api/logs?${queryParams.toString()}`)
-      .then(res => res.json())
-      .then(data => {
-        setLogs(data.logs || []);
-        setHistogram(data.histogram || []);
-        setLoading(false);
-        onRefresh();
-      })
-      .catch(err => {
-        console.error(err);
-        setLoading(false);
-      });
+    const p = new URLSearchParams();
+    if (dq) p.append('q', dq);
+    if (facility) p.append('facility', facility);
+    fetch(`/api/logs?${p.toString()}`).then(r => r.json()).then(d => {
+      setLogs(d.logs || []); setHist(d.histogram || []); setLoading(false); onRefresh();
+    }).catch(() => setLoading(false));
   };
 
-  useEffect(() => {
-    fetchLogsData();
-  }, [debouncedQuery, facilityFilter]);
+  useEffect(() => { fetchLogs(); }, [dq, facility]);
 
-  const getSeverityStyle = (sev: string) => {
-    switch (sev) {
-      case 'alert': return { color: '#fb7185', background: 'rgba(244, 63, 94, 0.12)', border: '1px solid rgba(244, 63, 94, 0.2)' };
-      case 'error': return { color: '#f97316', background: 'rgba(249, 115, 22, 0.12)', border: '1px solid rgba(249, 115, 22, 0.2)' };
-      case 'warning': return { color: '#fef08a', background: 'rgba(234, 179, 8, 0.12)', border: '1px solid rgba(234, 179, 8, 0.2)' };
-      default: return { color: '#93c5fd', background: 'rgba(59, 130, 246, 0.08)', border: '1px solid rgba(59, 130, 246, 0.15)' };
-    }
+  const sevStyle = (s: string) => {
+    if (s === 'alert') return { color: 'var(--critical-dim)', background: 'var(--critical-bg)' };
+    if (s === 'error') return { color: 'var(--high-dim)', background: 'var(--high-bg)' };
+    if (s === 'warning') return { color: 'var(--medium-dim)', background: 'var(--medium-bg)' };
+    return { color: 'var(--info-dim)', background: 'var(--info-bg)' };
   };
 
-  // Find max count in histogram for scaling
-  const maxCount = Math.max(...histogram.map(h => h.count), 1);
+  const maxC = Math.max(...hist.map(h => h.count), 1);
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: '20px', animation: 'flashNew 0.5s ease-out' }}>
-      <div className="page-header" style={{ marginBottom: '10px' }}>
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 12, animation: 'fadeInUp 0.25s ease-out' }}>
+      <div className="page-header" style={{ marginBottom: 4 }}>
         <div>
-          <h1 className="page-title">Elastic Log Explorer</h1>
-          <p className="page-subtitle">Search, parse, and analyze raw log events across nodes in real time</p>
+          <h1 className="page-title">Log Explorer</h1>
+          <p className="page-subtitle">Search and analyze raw events in real time</p>
         </div>
-        <button className="btn btn-outline" onClick={fetchLogsData} style={{ gap: '6px' }} disabled={loading}>
-          <RefreshCw size={14} className={loading ? 'pulse-alerting' : ''} style={{ animation: loading ? 'spin 1s linear infinite' : '' }} /> Refresh logs
+        <button className="btn btn-outline" onClick={fetchLogs} disabled={loading}>
+          <RefreshCw size={12} style={loading ? { animation: 'spin 1s linear infinite' } : {}} /> Refresh
         </button>
       </div>
 
-      {/* Query Bar */}
-      <div className="glass-panel" style={{ padding: '16px', display: 'flex', gap: '12px' }}>
-        <div style={{ display: 'flex', flex: 1, gap: '10px', background: 'rgba(0,0,0,0.15)', border: '1px solid hsl(var(--border-muted))', borderRadius: '8px', padding: '4px 12px' }}>
-          <Search size={18} style={{ color: '#64748b', alignSelf: 'center' }} />
-          <input
-            type="text"
-            placeholder="Enter search terms... (e.g. 'root', 'failed', 'status 200', 'db-replica')"
-            className="search-input"
-            value={searchQuery}
-            onChange={(e) => setSearchQuery(e.target.value)}
-            style={{ border: 'none', background: 'transparent', padding: '6px 0', width: '100%' }}
-          />
+      {/* Query bar */}
+      <div className="glass-panel" style={{ padding: '8px 10px', display: 'flex', gap: 8, alignItems: 'center' }}>
+        <div style={{ display: 'flex', flex: 1, gap: 6, background: 'var(--bg-surface)', border: '1px solid var(--border-2)', borderRadius: 'var(--r-xs)', padding: '3px 10px', alignItems: 'center' }}>
+          <Search size={13} style={{ color: 'var(--text-3)', flexShrink: 0 }} />
+          <input type="text" placeholder="Search logs... (root, failed, 404, db-replica)"
+            className="search-input" value={query} onChange={e => setQuery(e.target.value)}
+            style={{ border: 'none', background: 'transparent', padding: '4px 0', width: '100%' }} />
         </div>
-        
-        <select
-          className="select-input"
-          value={facilityFilter}
-          onChange={(e) => setFacilityFilter(e.target.value)}
-          style={{ width: '150px' }}
-        >
+        <select className="select-input" value={facility} onChange={e => setFacility(e.target.value)} style={{ minWidth: 120 }}>
           <option value="">All Services</option>
-          <option value="auth">ssh / pam_auth</option>
-          <option value="web">apache / web_server</option>
-          <option value="daemon">system_daemons</option>
-          <option value="syslog">syslogd_kernel</option>
+          <option value="auth">auth/pam</option>
+          <option value="web">web/http</option>
+          <option value="daemon">daemon</option>
+          <option value="syslog">syslog</option>
         </select>
       </div>
 
-      {/* Log Histogram */}
-      {histogram.length > 0 && (
-        <div className="glass-panel" style={{ padding: '20px' }}>
-          <h3 style={{ fontSize: '0.85rem', color: '#64748b', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: '14px', display: 'flex', alignItems: 'center', gap: '6px' }}>
-            <AlertCircle size={14} /> Log Frequency Histogram (Hits over 2 hours)
-          </h3>
-          <div style={{ height: '80px', width: '100%', position: 'relative' }}>
-            <svg width="100%" height="80" style={{ overflow: 'visible' }}>
-              {histogram.map((bucket, idx) => {
-                const rectWidth = 8;
-                const rectHeight = (bucket.count / maxCount) * 55;
-                const xPos = `${(idx / (histogram.length - 1)) * 94 + 3}%`;
-                const yPos = 60 - rectHeight;
-
+      {/* Histogram */}
+      {hist.length > 0 && (
+        <div className="glass-panel" style={{ padding: '12px 16px' }}>
+          <div style={{ fontSize: '0.65rem', color: 'var(--text-3)', fontWeight: 600, letterSpacing: '0.06em', textTransform: 'uppercase', marginBottom: 8, display: 'flex', alignItems: 'center', gap: 4 }}>
+            <BarChart3 size={11} /> Frequency (2h)
+          </div>
+          <div style={{ height: 60, width: '100%' }}>
+            <svg width="100%" height="60" style={{ overflow: 'visible' }}>
+              {hist.map((b, i) => {
+                const w = 6;
+                const h = (b.count / maxC) * 40;
+                const x = `${(i / (hist.length - 1)) * 94 + 3}%`;
                 return (
-                  <g key={idx}>
-                    {/* Bar */}
-                    <rect
-                      x={xPos}
-                      y={yPos}
-                      width={rectWidth}
-                      height={rectHeight}
-                      rx="2"
-                      fill={bucket.count > 0 ? '#38bdf8' : '#27272a'}
-                      opacity={bucket.count > 0 ? 0.8 : 0.3}
-                      style={{ transition: 'all 0.5s ease' }}
-                    />
-                    {/* Count Indicator */}
-                    {bucket.count > 0 && (
-                      <text
-                        x={xPos}
-                        y={yPos - 6}
-                        fill="#e2e8f0"
-                        fontSize="9"
-                        textAnchor="middle"
-                        dx="4"
-                      >
-                        {bucket.count}
-                      </text>
-                    )}
-                    {/* Time Label */}
-                    <text
-                      x={xPos}
-                      y="78"
-                      fill="#64748b"
-                      fontSize="9"
-                      textAnchor="middle"
-                      dx="4"
-                    >
-                      {bucket.time}
-                    </text>
+                  <g key={i}>
+                    <rect x={x} y={45 - h} width={w} height={h} rx="1"
+                      fill={b.count > 0 ? 'var(--accent)' : 'rgba(255,255,255,0.02)'}
+                      opacity={b.count > 0 ? 0.65 : 0.2} />
+                    {b.count > 0 && <text x={x} y={42 - h} fill="var(--text-2)" fontSize="7" textAnchor="middle" dx="3" fontFamily="'IBM Plex Mono', monospace">{b.count}</text>}
+                    <text x={x} y="58" fill="var(--text-3)" fontSize="7" textAnchor="middle" dx="3" fontFamily="'IBM Plex Mono', monospace">{b.time}</text>
                   </g>
                 );
               })}
@@ -163,95 +95,54 @@ export default function LogExplorer({ onRefresh }: LogExplorerProps) {
         </div>
       )}
 
-      {/* Log Console Output */}
+      {/* Log console */}
       <div className="glass-panel" style={{ overflow: 'hidden' }}>
-        {/* Terminal Header */}
-        <div style={{
-          background: 'rgba(255, 255, 255, 0.02)',
-          padding: '10px 18px',
-          borderBottom: '1px solid hsl(var(--border-muted))',
-          display: 'flex',
-          justifyContent: 'space-between',
-          alignItems: 'center'
-        }}>
-          <span style={{ fontSize: '0.8rem', color: '#94a3b8', display: 'flex', alignItems: 'center', gap: '6px', fontWeight: 600 }}>
-            <Terminal size={14} style={{ color: '#38bdf8' }} /> SYSLOG STREAM OUTPUT
+        <div style={{ background: 'var(--bg-row-alt)', padding: '7px 14px', borderBottom: '1px solid var(--border-1)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+          <span style={{ fontSize: '0.72rem', color: 'var(--text-3)', display: 'flex', alignItems: 'center', gap: 5, fontWeight: 600 }}>
+            <Terminal size={12} style={{ color: 'var(--accent)' }} /> SYSLOG
           </span>
-          <span style={{ fontSize: '0.75rem', color: '#64748b' }}>
-            Showing latest {logs.length} entries
-          </span>
+          <span style={{ fontSize: '0.68rem', color: 'var(--text-3)', fontFamily: "'IBM Plex Mono', monospace" }}>{logs.length} entries</span>
         </div>
 
-        {/* Scrollable logs area */}
-        <div style={{
-          padding: '12px 18px',
-          maxHeight: '450px',
-          overflowY: 'auto',
-          background: '#09090b',
-          display: 'flex',
-          flexDirection: 'column',
-          gap: '6px'
-        }}>
-          {logs.map((log) => (
-            <div key={log.id} style={{
-              display: 'flex',
-              gap: '12px',
-              fontFamily: 'JetBrains Mono, monospace',
-              fontSize: '0.8rem',
-              lineHeight: 1.6,
-              padding: '4px 0',
-              borderBottom: '1px solid rgba(255, 255, 255, 0.02)'
-            }}>
-              {/* Timestamp */}
-              <span style={{ color: '#64748b', whiteSpace: 'nowrap' }}>
-                {new Date(log.timestamp).toISOString()}
-              </span>
-
-              {/* Host */}
-              <span style={{ color: '#3b82f6', fontWeight: 600, whiteSpace: 'nowrap' }}>
-                [{log.agentName}]
-              </span>
-
-              {/* Facility */}
-              <span style={{ color: '#a78bfa', whiteSpace: 'nowrap' }}>
-                {log.facility}
-              </span>
-
-              {/* Severity Badge */}
-              <span style={{
-                ...getSeverityStyle(log.severity),
-                padding: '0 6px',
-                borderRadius: '4px',
-                fontSize: '0.7rem',
-                textTransform: 'uppercase',
-                fontWeight: 600,
-                display: 'inline-block',
-                height: 'fit-content'
+        <div style={{ padding: '4px 10px', maxHeight: 420, overflowY: 'auto', background: 'var(--bg-body)', display: 'flex', flexDirection: 'column' }}>
+          {logs.map(log => (
+            <div key={log.id} style={{ borderBottom: '1px solid var(--border-0)' }}>
+              <div onClick={() => toggle(log.id)} className="log-row-click" style={{
+                display: 'flex', gap: 8, fontFamily: "'IBM Plex Mono', monospace", fontSize: '0.76rem',
+                lineHeight: 1.5, padding: '4px 4px', cursor: 'pointer', borderRadius: 'var(--r-xs)',
+                transition: 'background 0.08s', background: expanded.has(log.id) ? 'rgba(59,130,246,0.03)' : 'transparent',
+                userSelect: 'none', alignItems: 'flex-start'
               }}>
-                {log.severity}
-              </span>
+                <span style={{ color: 'var(--text-4)', flexShrink: 0, marginTop: 2 }}>
+                  {expanded.has(log.id) ? <ChevronDown size={10} /> : <ChevronRight size={10} />}
+                </span>
+                <span style={{ color: 'var(--text-3)', whiteSpace: 'nowrap', fontSize: '0.72rem' }}>
+                  {new Date(log.timestamp).toISOString().replace('T', ' ').substring(0, 19)}
+                </span>
+                <span style={{ color: 'var(--accent)', fontWeight: 600, whiteSpace: 'nowrap' }}>[{log.agentName}]</span>
+                <span style={{ color: 'var(--purple)', whiteSpace: 'nowrap', fontSize: '0.72rem' }}>{log.facility}</span>
+                <span style={{ ...sevStyle(log.severity), padding: '0 4px', borderRadius: 'var(--r-xs)', fontSize: '0.62rem', textTransform: 'uppercase', fontWeight: 600, lineHeight: '16px', whiteSpace: 'nowrap', flexShrink: 0 }}>
+                  {log.severity}
+                </span>
+                <span style={{ color: 'var(--text-0)', whiteSpace: 'pre-wrap', wordBreak: 'break-word', flex: 1 }}>
+                  {log.message}
+                  {log.statusCode ? <span style={{ marginLeft: 6, color: log.statusCode >= 400 ? 'var(--critical)' : 'var(--low)', fontWeight: 600 }}>({log.statusCode})</span> : null}
+                </span>
+              </div>
 
-              {/* Message */}
-              <span style={{ color: '#e2e8f0', wordBreak: 'break-all' }}>
-                {log.message}
-                {log.statusCode ? (
-                  <span style={{
-                    marginLeft: '8px',
-                    color: log.statusCode >= 400 ? '#f43f5e' : '#10b981',
-                    fontWeight: 600
-                  }}>
-                    (Code: {log.statusCode})
-                  </span>
-                ) : null}
-              </span>
+              {expanded.has(log.id) && (
+                <div style={{ padding: '6px 10px 8px', margin: '2px 4px 6px 20px', background: 'rgba(0,0,0,0.3)', border: '1px solid var(--border-1)', borderRadius: 'var(--r-xs)', animation: 'fadeInUp 0.15s' }}>
+                  <div style={{ color: 'var(--text-3)', fontSize: '0.62rem', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.04em', marginBottom: 4, paddingBottom: 3, borderBottom: '1px solid var(--border-0)' }}>
+                    Structured Data
+                  </div>
+                  <pre style={{ margin: 0, color: 'var(--info-dim)', fontSize: '0.7rem', lineHeight: 1.4, whiteSpace: 'pre-wrap', wordBreak: 'break-all', fontFamily: "'IBM Plex Mono', monospace" }}>
+                    {JSON.stringify(log, null, 2)}
+                  </pre>
+                </div>
+              )}
             </div>
           ))}
-
-          {logs.length === 0 && (
-            <div style={{ padding: '60px 0', textAlign: 'center', color: '#64748b' }}>
-              No log messages matching search query found.
-            </div>
-          )}
+          {logs.length === 0 && <div style={{ padding: '40px 0', textAlign: 'center', color: 'var(--text-3)' }}>No logs match query.</div>}
         </div>
       </div>
     </div>

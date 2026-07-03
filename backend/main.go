@@ -56,6 +56,20 @@ func main() {
 	mux.HandleFunc("/api/fim", handlers.GetFimEvents)
 	mux.HandleFunc("/api/logs", handlers.GetLogs)
 	mux.HandleFunc("/api/simulate", handlers.TriggerSimulation)
+	mux.HandleFunc("/api/actions", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodOptions {
+			w.Header().Set("Access-Control-Allow-Origin", "*")
+			w.Header().Set("Access-Control-Allow-Methods", "POST, GET, OPTIONS")
+			w.Header().Set("Access-Control-Allow-Headers", "Content-Type")
+			w.WriteHeader(http.StatusOK)
+			return
+		}
+		if r.Method == http.MethodPost {
+			handlers.PerformAction(w, r)
+		} else {
+			handlers.GetActions(w, r)
+		}
+	})
 
 	// Wrap mux with CORS middleware
 	handler := corsMiddleware(mux)

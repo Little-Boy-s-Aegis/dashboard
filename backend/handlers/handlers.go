@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"strings"
 	"time"
@@ -660,3 +661,89 @@ func BulkAssignAlerts(w http.ResponseWriter, r *http.Request) {
 		"assignedCount": assignedCount,
 	})
 }
+
+// GET /api/actions
+func GetActions(w http.ResponseWriter, r *http.Request) {
+	store.DB.Mu.RLock()
+	defer store.DB.Mu.RUnlock()
+
+	// Return a copy sorted descending by timestamp
+	length := len(store.DB.ActionLogs)
+	actionsList := make([]*models.ActionLog, length)
+	for i, act := range store.DB.ActionLogs {
+		actionsList[length-1-i] = act
+	}
+
+	writeJSON(w, http.StatusOK, actionsList)
+}
+
+// POST /api/actions
+func PerformAction(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "Method not allowed"})
+		return
+	}
+
+	var req struct {
+		Actor      string `json:"actor"`
+		ActionType string `json:"actionType"`
+		Target     string `json:"target"`
+		Message    string `json:"message"`
+	}
+
+	err := json.NewDecoder(r.Body).Decode(&req)
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "Invalid request body"})
+		return
+	}
+
+	if req.Actor == "" || req.ActionType == "" || req.Target == "" {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "actor, actionType, and target are required"})
+		return
+	}
+
+	store.DB.Mu.Lock()
+	defer store.DB.Mu.Unlock()
+
+	store.DB.ActionCounter++
+	actionID := fmt.Sprintf("act-%04d", store.DB.ActionCounter)
+
+	status := "success"
+	detailMsg := req.Message
+	if detailMsg == "" {
+		detailMsg = fmt.Sprintf("Manual action completed successfully.")
+	}
+
+	// Apply side effects to simulation targets
+	if req.ActionType == "Isolate Host" {
+		// Find agent and set to isolated/disconnected status
+		for _, a := range store.DB.Agents {
+			if a.Name == req.Target || a.ID == req.Target {
+				a.Status = "disconnected"
+				detailMsg = fmt.Sprintf("Host %s has been isolated from the network. Local interfaces disabled.", a.Name)
+				break
+			}
+		}
+	} else if req.ActionType == "Block IP" {
+		detailMsg = fmt.Sprintf("Outbound and inbound traffic to IP %s blocked at firewall edge.", req.Target)
+	} else if req.ActionType == "Terminate Process" {
+		detailMsg = fmt.Sprintf("Process successfully terminated on destination agent.")
+	} else if req.ActionType == "Revoke Credentials" {
+		detailMsg = fmt.Sprintf("Credentials revoked for user account %s in Active Directory.", req.Target)
+	}
+
+	actionLog := &models.ActionLog{
+		ID:         actionID,
+		Timestamp:  time.Now(),
+		Actor:      req.Actor,
+		ActionType: req.ActionType,
+		Target:     req.Target,
+		Status:     status,
+		Message:    detailMsg,
+	}
+
+	store.DB.ActionLogs = append(store.DB.ActionLogs, actionLog)
+
+	writeJSON(w, http.StatusOK, actionLog)
+}
+
