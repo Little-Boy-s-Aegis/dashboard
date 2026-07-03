@@ -58,20 +58,6 @@ export default function DashboardOverview({ summary, recentAlerts, agents, actio
     }
   };
 
-  // Dynamic Abnormality Score based on alerts in selected time window
-  const getAbnormalityScore = (agentId: string) => {
-    const agentAlerts = filteredAlerts.filter(a => a.agentId === agentId && a.status !== 'resolved');
-    if (agentAlerts.length === 0) return 5; // base safe score
-    let score = 0;
-    agentAlerts.forEach(a => {
-      if (a.severity === 'critical') score += 40;
-      else if (a.severity === 'high') score += 25;
-      else if (a.severity === 'medium') score += 12;
-      else score += 5;
-    });
-    return Math.min(100, score);
-  };
-
   const topHosts = (() => {
     const m: Record<string, { name: string; count: number; critical: number }> = {};
     filteredAlerts.filter(a => a.status !== 'resolved').forEach(a => {
@@ -256,7 +242,6 @@ export default function DashboardOverview({ summary, recentAlerts, agents, actio
               agents.find(a => a.id === 'agent-03') || agents[2]
             ].filter(Boolean).map((agent, idx) => {
               const highestSev = getHighestSeverityForAgent(agent.id);
-              const score = getAbnormalityScore(agent.id);
               const totalEvents = filteredAlerts.filter(a => a.agentId === agent.id && ['low', 'medium', 'high', 'critical'].includes(a.severity)).length;
               return (
                 <div key={agent.id} style={{
@@ -284,22 +269,6 @@ export default function DashboardOverview({ summary, recentAlerts, agents, actio
                       <strong style={{ fontSize: '0.78rem', color: totalEvents > 0 ? 'var(--accent)' : 'var(--text-2)' }}>{totalEvents}</strong>
                     </div>
                   </div>
-
-                  <div style={{ display: 'flex', flexDirection: 'column', gap: 3, marginTop: 2 }}>
-                    <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.74rem' }}>
-                      <span style={{ color: 'var(--text-2)' }}>Abnormality:</span>
-                      <strong style={{ color: score > 70 ? 'var(--critical-dim)' : score > 40 ? 'var(--high-dim)' : 'var(--low-dim)' }}>
-                        {score}%
-                      </strong>
-                    </div>
-                    <div style={{ width: '100%', height: 4, background: 'rgba(255,255,255,0.05)', borderRadius: 2 }}>
-                      <div style={{
-                        width: `${score}%`, height: '100%',
-                        background: score > 70 ? 'var(--critical)' : score > 40 ? 'var(--high)' : 'var(--low)',
-                        borderRadius: 2
-                      }} />
-                    </div>
-                  </div>
                 </div>
               );
             })}
@@ -311,7 +280,7 @@ export default function DashboardOverview({ summary, recentAlerts, agents, actio
           <h3 style={{ fontSize: '0.82rem', display: 'flex', alignItems: 'center', gap: 6, color: 'var(--text-0)', marginBottom: 8 }}>
             <Cpu size={13} style={{ color: 'var(--info)' }} /> Security Orchestrator status
           </h3>
-          <div className="table-container" style={{ flex: 1, overflowY: 'auto', maxHeight: 330 }}>
+          <div className="table-container" style={{ flex: 1, overflowY: 'auto', maxHeight: 240 }}>
             <table className="sec-table" style={{ width: '100%', fontSize: '0.78rem' }}>
               <thead>
                 <tr>
