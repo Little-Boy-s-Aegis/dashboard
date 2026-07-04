@@ -87,10 +87,10 @@ func main() {
 
 	log.Println("==================================================")
 	log.Println("  Aegis Security Operations Center (SOC) API")
-	log.Println("  Server starting on http://localhost:8080")
+	log.Println("  Server starting on http://localhost:8082")
 	log.Println("==================================================")
 
-	if err := http.ListenAndServe(":8080", handler); err != nil {
+	if err := http.ListenAndServe(":8082", handler); err != nil {
 		log.Fatalf("Server failed to start: %v", err)
 	}
 }
