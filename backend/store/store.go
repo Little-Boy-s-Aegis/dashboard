@@ -666,7 +666,13 @@ var lastIngestedBankLogID int64 = 0
 
 func (db *Database) syncBankSecurityLogs() {
 	client := &http.Client{Timeout: 2 * time.Second}
-	resp, err := client.Get("http://localhost:8080/api/admin/security/logs")
+	req, err := http.NewRequest("GET", "http://localhost:8080/api/admin/security/logs", nil)
+	if err != nil {
+		return
+	}
+	req.Header.Set("X-Aegis-Token", "aegis-secret-security-sync-token-2026")
+
+	resp, err := client.Do(req)
 	if err != nil {
 		return
 	}
