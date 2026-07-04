@@ -3,8 +3,11 @@ package store
 import (
 	"crypto/md5"
 	"crypto/sha256"
+	"encoding/json"
 	"fmt"
 	"math/rand"
+	"net/http"
+	"strings"
 	"sync"
 	"time"
 
@@ -244,9 +247,12 @@ func (db *Database) startSimulator() {
 	metricTicker := time.NewTicker(3 * time.Second)
 	alertTicker := time.NewTicker(8 * time.Second)
 	logTicker := time.NewTicker(1 * time.Second)
+	syncTicker := time.NewTicker(2 * time.Second)
 
 	for {
 		select {
+		case <-syncTicker.C:
+			db.syncBankSecurityLogs()
 		case <-metricTicker.C:
 			db.Mu.Lock()
 			// Fluctuate CPU/RAM/Disk metrics slightly
@@ -653,5 +659,116 @@ func (db *Database) updateAgentThreatsAndNetwork() {
 			agent.NetworkOut = clamp(agent.NetworkOut+rand.Float64()*2-1, 1.5, 12.0)
 			agent.NetworkIn = clamp(agent.NetworkIn+rand.Float64()*4-2, 2.0, 25.0)
 		}
+	}
+}
+
+var lastIngestedBankLogID int64 = 0
+
+func (db *Database) syncBankSecurityLogs() {
+	client := &http.Client{Timeout: 2 * time.Second}
+	resp, err := client.Get("http://localhost:8080/api/admin/security/logs")
+	if err != nil {
+		return
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return
+	}
+
+	var logs []struct {
+		ID          int64       `json:"id"`
+		Timestamp   interface{} `json:"timestamp"`
+		AttackType  string      `json:"attackType"`
+		Endpoint    string      `json:"endpoint"`
+		Payload     string      `json:"payload"`
+		Status      string      `json:"status"`
+		ClientIP    string      `json:"clientIp"`
+		Description string      `json:"description"`
+	}
+
+	if err := json.NewDecoder(resp.Body).Decode(&logs); err != nil {
+		return
+	}
+
+	db.Mu.Lock()
+	defer db.Mu.Unlock()
+
+	hasNewAlerts := false
+	for i := len(logs) - 1; i >= 0; i-- {
+		logItem := logs[i]
+		if logItem.ID > lastIngestedBankLogID {
+			lastIngestedBankLogID = logItem.ID
+
+			mitreTech := "T1190"
+			mitreTactics := []string{"Initial Access"}
+			severity := "high"
+			if strings.ToUpper(logItem.Status) == "ALLOWED" {
+				severity = "critical"
+			}
+
+			switch strings.ToUpper(logItem.AttackType) {
+			case "SQL_INJECTION":
+				mitreTech = "T1190"
+				mitreTactics = []string{"Initial Access"}
+			case "XSS":
+				mitreTech = "T1189"
+				mitreTactics = []string{"Initial Access"}
+			case "BOLA/IDOR":
+				mitreTech = "T1068"
+				mitreTactics = []string{"Privilege Escalation"}
+			case "PARAMETER_TAMPERING":
+				mitreTech = "T1565.002"
+				mitreTactics = []string{"Impact"}
+			}
+
+			db.AlertCounter++
+			alertID := fmt.Sprintf("alt-%04d", db.AlertCounter)
+
+			agent := db.Agents["agent-01"]
+			if agent != nil {
+				agent.Status = "alerting"
+			}
+
+			db.Alerts = append(db.Alerts, &models.Alert{
+				ID:             alertID,
+				RuleID:         fmt.Sprintf("rule-bank-%03d", logItem.ID),
+				Severity:       severity,
+				Title:          fmt.Sprintf("Aegis Bank - %s Detected", logItem.AttackType),
+				Description:    logItem.Description,
+				AgentID:        "agent-01",
+				AgentName:      "Web-Prod-01",
+				MITRETechnique: mitreTech,
+				MITRETactics:   mitreTactics,
+				Category:       "web",
+				Timestamp:      time.Now(),
+				RawLog:         fmt.Sprintf(`{"timestamp":"%s","attack_type":"%s","endpoint":"%s","payload":"%s","status":"%s","client_ip":"%s","description":"%s"}`, time.Now().Format(time.RFC3339), logItem.AttackType, logItem.Endpoint, logItem.Payload, logItem.Status, logItem.ClientIP, logItem.Description),
+				Status:         "open",
+			})
+
+			db.LogCounter++
+			db.Logs = append(db.Logs, &models.LogEntry{
+				ID:         fmt.Sprintf("log-%05d", db.LogCounter),
+				Timestamp:  time.Now(),
+				AgentID:    "agent-01",
+				AgentName:  "Web-Prod-01",
+				Facility:   "web",
+				Severity:   severity,
+				Message:    fmt.Sprintf("BANK SECURITY ALARM: %s payload detected on %s from IP %s. Status: %s. Detail: %s", logItem.AttackType, logItem.Endpoint, logItem.ClientIP, logItem.Status, logItem.Description),
+				SourceIP:   logItem.ClientIP,
+			})
+
+			hasNewAlerts = true
+		}
+	}
+
+	if hasNewAlerts {
+		if len(db.Alerts) > 100 {
+			db.Alerts = db.Alerts[len(db.Alerts)-100:]
+		}
+		if len(db.Logs) > 500 {
+			db.Logs = db.Logs[len(db.Logs)-500:]
+		}
+		db.updateAgentThreatsAndNetwork()
 	}
 }
