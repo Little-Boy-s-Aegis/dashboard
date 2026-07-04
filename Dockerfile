@@ -1,5 +1,5 @@
 # Build Go backend
-FROM golang:1.21-alpine AS builder
+FROM golang:alpine AS builder
 WORKDIR /app
 COPY backend/go.mod ./
 RUN go mod download
