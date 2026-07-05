@@ -1,10 +1,12 @@
 package main
 
 import (
+	"context"
 	"log"
 	"net/http"
 	"strings"
 
+	"dashboard/backend/consumer"
 	"dashboard/backend/handlers"
 	"dashboard/backend/store"
 )
@@ -28,6 +30,9 @@ func corsMiddleware(next http.Handler) http.Handler {
 func main() {
 	// Initialize Database (PostgreSQL with In-Memory fallback)
 	store.InitDB()
+
+	// Start Kafka Consumer for real-time security event ingestion
+	consumer.StartKafkaConsumer(context.Background())
 
 	mux := http.NewServeMux()
 
