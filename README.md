@@ -1,37 +1,73 @@
-# Aegis SOC Dashboard - AI-Native SIEM & Security Platform
+# Aegis SOC Dashboard - SIEM & AI Security Copilot
 
-Aegis SOC is a premium, real-time Security Operations Center (SOC) dashboard. It integrates telemetry visualization, automated cyberattack simulations, File Integrity Monitoring (FIM) diff triaging, and an AI Security Copilot playbook advisor.
-
-## Architecture & Technology Stack
-- **Frontend**: React 18, TypeScript, Vite, Vanilla CSS. Fully responsive design with glassmorphism, animated glow highlights, and custom SVG logs & alerts graphs.
-- **Backend**: Go standard library REST API. Uses a thread-safe in-memory dataset, background event dispatch loop, and customizable security threat simulators.
-
-## Features
-1. **SOC Overview Dashboard**: Multi-indicator KPIs (threat score, agent counts, alarm trends, MITRE coverage mapping) and a prioritized **Top Affected Hosts** widget.
-2. **Security Alerts Incident Manager**: Multi-severity triage grid (`OPEN`, `INVESTIGATING`, `RESOLVED`) supporting detail inspection, raw event JSON visualizers, and alarm resolution commands.
-3. **AI Security Copilot**: Context-aware security analyst panel profiling malicious actors (e.g. LockBit 3.0), evaluating threat scopes, and recommending copyable CLI mitigation tasks.
-4. **File Integrity Monitoring (FIM)**: Tracks host file creations, deletions, and config edits (e.g. `/etc/passwd` backdoor accounts or `/etc/security/limits.conf` sockets adjustments) side-by-side with an interactive color-coded diff inspector.
-5. **Elastic Log Explorer**: Unified syslog console utilizing query matching and a real-time log hit frequency histogram.
+The Aegis Security Operations Center (SOC) Dashboard is a real-time SIEM platform. It ingests security logs and telemetry produced by the banking backend, evaluates alerts using an AI Security Copilot, tracks host File Integrity Monitoring (FIM), and simulates security attack scenarios.
 
 ---
 
-## Quick Start
+## Architecture & Stack
+- **Go API Backend** (`dashboard/backend`): Uses Go Standard Library HTTP server, Segmentio Kafka-go reader, and PostgreSQL database with in-memory fallback.
+- **Vite React Frontend** (`dashboard/frontend`): Built with React 19, TypeScript, Vite, Lucide icons, and HSL-styled vanilla CSS.
 
-### Prerequisites
-- Go 1.20+
-- Node.js 18+
+---
 
-### 1. Launch the Backend API
+## Running the Dashboard (Direct / Host Mode)
+
+To run the SOC dashboard locally, you must run the Go backend and React frontend concurrently:
+
+### 1. Start the Go Backend API
+Navigate to the `backend` folder, fetch dependencies, and run:
 ```bash
-cd backend
+cd dashboard/backend
+go mod download
 go run main.go
 ```
-The Go REST backend will start listening on `http://localhost:8080`.
+- The SOC API server will start listening on **`http://localhost:8082`**.
+- It automatically tries to connect to PostgreSQL. If PostgreSQL is offline, it gracefully falls back to **In-Memory database mode** so you can still explore the application.
+- It will attempt to read security logs from Kafka on `localhost:9094`.
 
-### 2. Launch the Frontend Dev Server
+### 2. Start the React Frontend Dev Server
+In a separate terminal window:
 ```bash
-cd frontend
+cd dashboard/frontend
 npm install
 npm run dev
 ```
-Open your browser and navigate to `http://localhost:5173/` (or `http://localhost:5174` if the port is offset) to interact with the platform.
+- Open **`http://localhost:3001`** in your browser.
+- The Vite server is configured to proxy all `/api` requests to the Go backend on `http://localhost:8082`.
+
+---
+
+## Environment Variables (Go Backend)
+Set these variables in your terminal to override default parameters:
+- `DATABASE_URL`: Postgres DSN connection string (e.g. `postgres://postgres:1@localhost:5432/aegis?sslmode=disable`).
+- `KAFKA_BOOTSTRAP_SERVERS`: Kafka broker addresses (e.g. `localhost:9094`).
+
+---
+
+## Containerized Deployment (Docker)
+
+To run the dashboard services as isolated Docker containers:
+
+### 1. Build & Run Go Backend
+```bash
+# From the 'dashboard' root directory
+docker build -t aegis-dashboard-backend .
+
+# Run container
+docker run -d -p 8082:8082 \
+  -e DATABASE_URL=postgres://postgres:1@host.docker.internal:5432/aegis \
+  -e KAFKA_BOOTSTRAP_SERVERS=host.docker.internal:9094 \
+  --name aegis-soc-backend-service \
+  aegis-dashboard-backend
+```
+
+### 2. Build & Run React/Vite Frontend
+```bash
+# From the 'dashboard/frontend' directory
+cd frontend
+docker build -t aegis-dashboard-frontend .
+
+# Run container
+docker run -d -p 3001:3001 --name aegis-soc-frontend-service aegis-dashboard-frontend
+```
+The frontend container compiles the Vite project into static assets and uses internal Nginx to serve them on port `3001` under the `/soc/` path.
