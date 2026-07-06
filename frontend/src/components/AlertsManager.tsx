@@ -2,6 +2,16 @@ import { useState, useEffect } from 'react';
 import { Search, Eye, CheckCircle, Sparkles, Copy, RefreshCw, Terminal } from 'lucide-react';
 import type { Alert, AIAnalysis } from '../types';
 
+const getAttackerIp = (rawLog?: string): string => {
+  if (!rawLog) return 'N/A';
+  try {
+    const parsed = JSON.parse(rawLog);
+    return parsed.clientIp || parsed.client_ip || parsed.sourceIp || parsed.srcIp || parsed.ip || 'N/A';
+  } catch {
+    return 'N/A';
+  }
+};
+
 interface Props {
   alerts: Alert[];
   onRefresh: () => void;
@@ -152,7 +162,17 @@ export default function AlertsManager({ alerts, onRefresh, initialMitreFilter, o
                     <td><span className={`badge badge-${a.severity}`}>{a.severity}</span></td>
                     <td style={{ color: 'var(--text-3)', fontFamily: "'IBM Plex Mono', monospace", fontSize: '0.76rem' }}>{new Date(a.timestamp).toLocaleTimeString('en-US', { hour12: false })}</td>
                     <td style={{ fontWeight: 500 }} title={a.agentName}>{a.agentName}</td>
-                    <td style={{ fontWeight: 600, color: 'var(--text-0)' }} title={a.title}>{a.title}</td>
+                    <td>
+                      <div style={{ fontWeight: 600, color: 'var(--text-0)' }} title={a.title}>{a.title}</div>
+                      {(() => {
+                        const attackerIp = getAttackerIp(a.rawLog);
+                        return attackerIp !== 'N/A' && (
+                          <div style={{ fontSize: '0.72rem', color: 'var(--critical)', marginTop: 2, display: 'flex', gap: 4, alignItems: 'center' }}>
+                            <span style={{ color: 'var(--text-3)' }}>Attacker:</span> {attackerIp}
+                          </div>
+                        );
+                      })()}
+                    </td>
                     <td><code style={{ color: 'var(--info)', fontSize: '0.76rem' }}>{a.mitreTechnique}</code></td>
                     <td onClick={e => e.stopPropagation()}>
                       <select value={a.assignee || ''} onChange={e => handleAssign(a.id, e.target.value)} className="select-input"
@@ -186,7 +206,8 @@ export default function AlertsManager({ alerts, onRefresh, initialMitreFilter, o
           <div style={{ padding: 12, background: 'var(--bg-surface)', borderRadius: 'var(--r-xs)', fontSize: '0.84rem', border: '1px solid var(--border-0)' }}>
             <p style={{ margin: 0, lineHeight: 1.5 }}>{selected.description}</p>
             <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8, marginTop: 10, fontSize: '0.8rem' }}>
-              <div style={{ color: 'var(--text-3)' }}>Host: <span style={{ color: 'var(--text-1)' }}>{selected.agentName}</span></div>
+              <div style={{ color: 'var(--text-3)' }}>Host (Target): <span style={{ color: 'var(--text-1)' }}>{selected.agentName}</span></div>
+              <div style={{ color: 'var(--text-3)' }}>Attacker IP: <span style={{ color: 'var(--critical)', fontWeight: 600 }}>{getAttackerIp(selected.rawLog)}</span></div>
               <div style={{ color: 'var(--text-3)' }}>MITRE: <code style={{ color: 'var(--info)' }}>{selected.mitreTechnique}</code></div>
               <div style={{ color: 'var(--text-3)' }}>Category: <span style={{ color: 'var(--text-1)' }}>{selected.category}</span></div>
               <div style={{ color: 'var(--text-3)' }}>Assignee:
