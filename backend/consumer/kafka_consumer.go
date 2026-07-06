@@ -47,7 +47,7 @@ func StartKafkaConsumer(ctx context.Context) {
 		MinBytes:       1,
 		MaxBytes:       10e6,
 		CommitInterval: time.Second,
-		StartOffset:    kafka.LastOffset,
+		StartOffset:    kafka.FirstOffset,
 	})
 
 	log.Printf("[Kafka Consumer] Connected to brokers=%s topic=%s group=%s", brokers, topic, groupID)
@@ -128,9 +128,14 @@ func ingestSecurityEvent(event *SecurityEvent) {
 		db.SaveAgent(agent)
 	}
 
+	ruleSub := event.EventID
+	if len(ruleSub) > 8 {
+		ruleSub = ruleSub[:8]
+	}
+
 	db.AddAlert(&models.Alert{
 		ID:             alertID,
-		RuleID:         fmt.Sprintf("rule-kafka-%s", event.EventID[:8]),
+		RuleID:         fmt.Sprintf("rule-kafka-%s", ruleSub),
 		Severity:       severity,
 		Title:          fmt.Sprintf("Aegis Bank - %s Detected", event.AttackType),
 		Description:    event.Description,

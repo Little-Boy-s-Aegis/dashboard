@@ -37,7 +37,7 @@ func consumeCleanLogs(ctx context.Context, brokers []string) {
 		MinBytes:       1,
 		MaxBytes:       10e6,
 		CommitInterval: time.Second,
-		StartOffset:    kafka.LastOffset,
+		StartOffset:    kafka.FirstOffset,
 	})
 	defer reader.Close()
 
@@ -90,9 +90,14 @@ func pushToDashboardStore(logEntry *models.LogEntry) {
 			agent.Status = "alerting"
 		}
 
+		subID := logEntry.ID
+		if len(subID) > 4 {
+			subID = subID[len(subID)-4:]
+		}
+
 		db.Alerts = append(db.Alerts, &models.Alert{
 			ID:             alertID,
-			RuleID:         fmt.Sprintf("rule-siem-%s", logEntry.ID[len(logEntry.ID)-4:]),
+			RuleID:         fmt.Sprintf("rule-siem-%s", subID),
 			Severity:       "critical",
 			Title:          fmt.Sprintf("SIEM Filter - %s Detected", logEntry.ThreatType),
 			Description:    fmt.Sprintf("An adversarial pattern was detected on service %s from IP %s. Category: %s", logEntry.Facility, logEntry.SourceIP, logEntry.ThreatType),
