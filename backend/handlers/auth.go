@@ -170,7 +170,7 @@ func RequestToken(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, models.AuthResponse{
 		UID:      uid,
 		Username: username,
-		Token:    token,
+		Token:    "", // Redacted: OTP is only printed in the server logs, not disclosed in response
 		Expiry:   expiry,
 	})
 }
