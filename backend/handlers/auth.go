@@ -75,6 +75,32 @@ func getIP(r *http.Request) string {
 	return ip
 }
 
+// Helper: Check if brute force vulnerability is enabled in the Java Bank Backend
+func isBruteForceVulnerable() bool {
+	client := &http.Client{Timeout: 1 * time.Second}
+	bankURL := os.Getenv("BANK_BACKEND_URL")
+	if bankURL == "" {
+		bankURL = "http://be-backend:8080"
+	}
+	resp, err := client.Get(bankURL + "/api/admin/security/status")
+	if err != nil {
+		return false
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return false
+	}
+
+	var status struct {
+		BruteForceEnabled bool `json:"bruteForceEnabled"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&status); err != nil {
+		return false
+	}
+	return status.BruteForceEnabled
+}
+
 // POST /api/auth/request-token
 func RequestToken(w http.ResponseWriter, r *http.Request) {
 	// Enable CORS headers for preflight and standard requests
@@ -157,6 +183,9 @@ func RequestToken(w http.ResponseWriter, r *http.Request) {
 	token := generateSecureSHA256Token()
 	expiry := time.Now().Add(5 * time.Minute)
 
+	// Check if vulnerable to brute force / account enumeration
+	isVulnerable := isBruteForceVulnerable()
+
 	if isAllowed {
 		// Save token in memory store or SQL
 		if store.UsePostgres {
@@ -175,7 +204,23 @@ func RequestToken(w http.ResponseWriter, r *http.Request) {
 		otpMsg := fmt.Sprintf("[SECURITY AUTH OTP] Copy this SHA-256 token to login for UID %s (%s):\n--> %s\n", uid, username, token)
 		_ = os.WriteFile("otp.txt", []byte(otpMsg), 0600)
 		log.Printf("[SECURITY AUTH] One-time password generated for authentication request.")
+
+		if isVulnerable {
+			// Vulnerable mode: expose real username and token for valid UID
+			writeJSON(w, http.StatusOK, models.AuthResponse{
+				UID:      uid,
+				Username: username,
+				Token:    token,
+				Expiry:   expiry,
+			})
+			return
+		}
 	} else {
+		if isVulnerable {
+			// Vulnerable mode: return error response for invalid UID
+			writeJSON(w, http.StatusNotFound, map[string]string{"error": "Operator not found"})
+			return
+		}
 		// Mock delay to prevent timing attacks / account enumeration
 		time.Sleep(50 * time.Millisecond)
 	}
