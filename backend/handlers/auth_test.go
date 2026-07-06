@@ -808,6 +808,21 @@ func TestAuthAdditionalEdgeCases(t *testing.T) {
 		}
 	})
 
+	t.Run("CSRF Validation with prefix-spoofed Referer", func(t *testing.T) {
+		dummyHandler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.WriteHeader(http.StatusOK)
+		})
+		wrapped := AuthMiddleware(dummyHandler)
+
+		req := httptest.NewRequest("POST", "/api/protected-route", nil)
+		req.Header.Set("Referer", "http://localhost:5173.evil.test/poc")
+		w := httptest.NewRecorder()
+		wrapped.ServeHTTP(w, req)
+		if w.Code != http.StatusForbidden {
+			t.Errorf("Expected 403, got %d", w.Code)
+		}
+	})
+
 	t.Run("Token check invalid Authorization prefix format", func(t *testing.T) {
 		req := httptest.NewRequest("GET", "/api/auth/check", nil)
 		req.Header.Set("Authorization", "Basic dXNlcjpwYXNz")

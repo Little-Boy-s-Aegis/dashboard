@@ -10,6 +10,7 @@ import (
 	"log"
 	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"strings"
 	"sync"
@@ -497,7 +498,14 @@ func AuthMiddleware(next http.Handler) http.Handler {
 			origin := r.Header.Get("Origin")
 			referer := r.Header.Get("Referer")
 			
-			isValidOrigin := origin == "http://localhost:5173" || strings.HasPrefix(referer, "http://localhost:5173")
+			isValidOrigin := origin == "http://localhost:5173"
+			if !isValidOrigin && referer != "" {
+				if parsedUrl, err := url.Parse(referer); err == nil {
+					if parsedUrl.Host == "localhost:5173" {
+						isValidOrigin = true
+					}
+				}
+			}
 
 			if !isValidOrigin {
 				log.Printf("[SECURITY ALERT] CSRF or forbidden origin request blocked! Origin: %s, Referer: %s", origin, referer)
