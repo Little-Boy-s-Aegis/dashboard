@@ -47,7 +47,7 @@ func StartKafkaConsumer(ctx context.Context) {
 		MinBytes:       1,
 		MaxBytes:       10e6,
 		CommitInterval: time.Second,
-		StartOffset:    kafka.LastOffset,
+		StartOffset:    kafka.FirstOffset,
 	})
 
 	log.Printf("[Kafka Consumer] Connected to brokers=%s topic=%s group=%s", brokers, topic, groupID)
@@ -73,6 +73,13 @@ func StartKafkaConsumer(ctx context.Context) {
 				var event SecurityEvent
 				if err := json.Unmarshal(msg.Value, &event); err != nil {
 					log.Printf("[Kafka Consumer] Failed to unmarshal message: %v", err)
+					continue
+				}
+
+				// Verify message source to prevent forgery
+				src := strings.TrimSpace(event.SourceService)
+				if src != "aegis-bank-backend" && src != "NginxGateway" && src != "BankBackend" {
+					log.Printf("[Kafka Consumer] Discarded untrusted/forged event [%s] from source: %s", event.EventID, event.SourceService)
 					continue
 				}
 
@@ -128,9 +135,14 @@ func ingestSecurityEvent(event *SecurityEvent) {
 		db.SaveAgent(agent)
 	}
 
+	ruleSub := event.EventID
+	if len(ruleSub) > 8 {
+		ruleSub = ruleSub[:8]
+	}
+
 	db.AddAlert(&models.Alert{
 		ID:             alertID,
-		RuleID:         fmt.Sprintf("rule-kafka-%s", event.EventID[:8]),
+		RuleID:         fmt.Sprintf("rule-kafka-%s", ruleSub),
 		Severity:       severity,
 		Title:          fmt.Sprintf("Aegis Bank - %s Detected", event.AttackType),
 		Description:    event.Description,

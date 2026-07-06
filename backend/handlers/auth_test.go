@@ -230,8 +230,13 @@ func TestRequestTokenHandler(t *testing.T) {
 		req := httptest.NewRequest("POST", "/api/auth/request-token", bytes.NewBufferString(payload))
 		w := httptest.NewRecorder()
 		RequestToken(w, req)
-		if w.Code != http.StatusBadRequest {
-			t.Errorf("Expected status 400, got %d", w.Code)
+		if w.Code != http.StatusOK {
+			t.Errorf("Expected status 200, got %d", w.Code)
+		}
+		var res models.AuthResponse
+		json.Unmarshal(w.Body.Bytes(), &res)
+		if res.Username != "Operator" || res.Token != "" {
+			t.Errorf("Expected uniform response with username 'Operator' and empty token, got %+v", res)
 		}
 	})
 
@@ -645,6 +650,16 @@ func TestAuthMiddleware(t *testing.T) {
 		}
 	})
 
+	t.Run("CSRF Check Fail - Empty Origin/Referer", func(t *testing.T) {
+		setupTestStores()
+		req := httptest.NewRequest("POST", "/api/protected-route", nil)
+		w := httptest.NewRecorder()
+		wrapped.ServeHTTP(w, req)
+		if w.Code != http.StatusForbidden {
+			t.Errorf("Expected status 403 Forbidden on empty Origin/Referer, got %d", w.Code)
+		}
+	})
+
 	t.Run("Expired session in Middleware", func(t *testing.T) {
 		setupTestStores()
 		expiredToken := "expired-middleware-token"
@@ -759,8 +774,8 @@ func TestSQLFailuresCoverage(t *testing.T) {
 		req := httptest.NewRequest("POST", "/api/auth/request-token", bytes.NewBufferString(payload))
 		w := httptest.NewRecorder()
 		RequestToken(w, req)
-		if w.Code != http.StatusBadRequest {
-			t.Errorf("Expected 400, got %d", w.Code)
+		if w.Code != http.StatusInternalServerError {
+			t.Errorf("Expected 500, got %d", w.Code)
 		}
 
 		// 2. Login SQL query OTP failure
@@ -790,6 +805,21 @@ func TestAuthAdditionalEdgeCases(t *testing.T) {
 		wrapped.ServeHTTP(w, req)
 		if w.Code != http.StatusUnauthorized {
 			t.Errorf("Expected 401, got %d", w.Code)
+		}
+	})
+
+	t.Run("CSRF Validation with prefix-spoofed Referer", func(t *testing.T) {
+		dummyHandler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.WriteHeader(http.StatusOK)
+		})
+		wrapped := AuthMiddleware(dummyHandler)
+
+		req := httptest.NewRequest("POST", "/api/protected-route", nil)
+		req.Header.Set("Referer", "http://localhost:5173.evil.test/poc")
+		w := httptest.NewRecorder()
+		wrapped.ServeHTTP(w, req)
+		if w.Code != http.StatusForbidden {
+			t.Errorf("Expected 403, got %d", w.Code)
 		}
 	})
 

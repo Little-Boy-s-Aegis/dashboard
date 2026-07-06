@@ -3,12 +3,14 @@ package handlers
 import (
 	"crypto/rand"
 	"crypto/sha256"
+	"database/sql"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"log"
 	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"strings"
 	"sync"
@@ -133,44 +135,56 @@ func RequestToken(w http.ResponseWriter, r *http.Request) {
 	var isAllowed bool
 	if store.UsePostgres {
 		err := store.SQL.QueryRow("SELECT username FROM operators WHERE uid = $1", uid).Scan(&username)
-		isAllowed = (err == nil)
+		if err != nil {
+			if err == sql.ErrNoRows {
+				isAllowed = false
+			} else {
+				log.Printf("[DATABASE ERROR] Failed to query operator: %v", err)
+				writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "Database read error"})
+				return
+			}
+		} else {
+			isAllowed = true
+		}
 	} else {
 		username, isAllowed = allowedUIDs[uid]
 	}
 
-	if !isAllowed {
-		// Mock delay to prevent timing attacks / account enumeration
-		time.Sleep(100 * time.Millisecond)
-		// Return generic error message to prevent account harvesting
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "Invalid login request or account disabled"})
-		return
-	}
+	// Always use a generic username to prevent leaking information
+	displayUsername := "Operator"
 
 	// 3. Generate token
 	token := generateSecureSHA256Token()
 	expiry := time.Now().Add(5 * time.Minute)
 
-	// Save token in memory store or SQL
-	if store.UsePostgres {
-		if err := store.SaveSQLOTP(uid, token, expiry); err != nil {
-			log.Printf("[DATABASE ERROR] Failed to save OTP in Postgres: %v", err)
-			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "Database write error"})
-			return
+	if isAllowed {
+		// Save token in memory store or SQL
+		if store.UsePostgres {
+			if err := store.SaveSQLOTP(uid, token, expiry); err != nil {
+				log.Printf("[DATABASE ERROR] Failed to save OTP in Postgres: %v", err)
+				writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "Database write error"})
+				return
+			}
+		} else {
+			otpStore[uid] = otpData{
+				Token:     token,
+				ExpiresAt: expiry,
+			}
 		}
+		// Write to a local file for operator retrieval without exposing secrets in Docker stdout/stderr logs
+		otpMsg := fmt.Sprintf("[SECURITY AUTH OTP] Copy this SHA-256 token to login for UID %s (%s):\n--> %s\n", uid, username, token)
+		_ = os.WriteFile("otp.txt", []byte(otpMsg), 0600)
+		log.Printf("[SECURITY AUTH] One-time password generated for authentication request.")
 	} else {
-		otpStore[uid] = otpData{
-			Token:     token,
-			ExpiresAt: expiry,
-		}
+		// Mock delay to prevent timing attacks / account enumeration
+		time.Sleep(50 * time.Millisecond)
 	}
-
-	fmt.Printf("\n🔑 [SECURITY AUTH OTP] Copy this SHA-256 token to login for UID %s (%s):\n--> %s\n\n", uid, username, token)
 
 	// Send back response
 	writeJSON(w, http.StatusOK, models.AuthResponse{
 		UID:      uid,
-		Username: username,
-		Token:    token,
+		Username: displayUsername,
+		Token:    "", // Redacted: OTP is only printed in the server logs, not disclosed in response
 		Expiry:   expiry,
 	})
 }
@@ -304,7 +318,7 @@ func Login(w http.ResponseWriter, r *http.Request) {
 		Path:     "/",
 		Expires:  expiresAt,
 		HttpOnly: true,
-		Secure:   false, // Set to true in prod (HTTPS)
+		Secure:   true, // Set to true to enforce HTTPS/secure transmission
 		SameSite: http.SameSiteLaxMode,
 	}
 	http.SetCookie(w, cookie)
@@ -313,7 +327,7 @@ func Login(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, models.LoginResponse{
 		UID:          uid,
 		Username:     username,
-		SessionToken: sessionToken,
+		SessionToken: "", // Redacted: Session token is only sent via HttpOnly cookie
 		ExpiresAt:    expiresAt,
 	})
 }
@@ -360,7 +374,7 @@ func Logout(w http.ResponseWriter, r *http.Request) {
 		Path:     "/",
 		Expires:  time.Unix(0, 0),
 		HttpOnly: true,
-		Secure:   false,
+		Secure:   true, // Set to true to enforce HTTPS/secure transmission
 		SameSite: http.SameSiteLaxMode,
 	}
 	http.SetCookie(w, clearCookie)
@@ -487,9 +501,13 @@ func AuthMiddleware(next http.Handler) http.Handler {
 			origin := r.Header.Get("Origin")
 			referer := r.Header.Get("Referer")
 			
-			isValidOrigin := origin == "http://localhost:5173" || strings.HasPrefix(referer, "http://localhost:5173")
-			if origin == "" && referer == "" {
-				isValidOrigin = true // allow if both empty (e.g. same origin direct request)
+			isValidOrigin := origin == "http://localhost:5173"
+			if !isValidOrigin && referer != "" {
+				if parsedUrl, err := url.Parse(referer); err == nil {
+					if parsedUrl.Host == "localhost:5173" {
+						isValidOrigin = true
+					}
+				}
 			}
 
 			if !isValidOrigin {
