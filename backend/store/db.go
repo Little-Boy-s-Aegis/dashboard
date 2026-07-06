@@ -220,8 +220,27 @@ func runMigrations() {
 			process_name VARCHAR(100) NOT NULL
 		)
 	`)
+	// 9. Database Performance Indexes for Metadata Query Optimization
+	_, err = SQL.Exec(`
+		-- Indexes for Agents
+		CREATE INDEX IF NOT EXISTS idx_agents_status ON agents(status);
+
+		-- Indexes for Log Entries
+		CREATE INDEX IF NOT EXISTS idx_log_entries_agent_id ON log_entries(agent_id);
+		CREATE INDEX IF NOT EXISTS idx_log_entries_timestamp ON log_entries(timestamp DESC);
+		CREATE INDEX IF NOT EXISTS idx_log_entries_severity ON log_entries(severity);
+		CREATE INDEX IF NOT EXISTS idx_log_entries_threat_flagged ON log_entries(threat_flagged);
+
+		-- Indexes for Alerts
+		CREATE INDEX IF NOT EXISTS idx_alerts_agent_id ON alerts(agent_id);
+		CREATE INDEX IF NOT EXISTS idx_alerts_status ON alerts(status);
+		CREATE INDEX IF NOT EXISTS idx_alerts_timestamp ON alerts(timestamp DESC);
+
+		-- Indexes for FIM Events
+		CREATE INDEX IF NOT EXISTS idx_fim_events_agent_id_timestamp ON fim_events(agent_id, timestamp DESC);
+	`)
 	if err != nil {
-		log.Fatalf("Migration failed (fim_events): %v", err)
+		log.Fatalf("Migration failed (indexes): %v", err)
 	}
 
 	log.Printf("[DATABASE] Schema migrations completed successfully.")
