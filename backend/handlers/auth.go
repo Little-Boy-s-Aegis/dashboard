@@ -171,7 +171,10 @@ func RequestToken(w http.ResponseWriter, r *http.Request) {
 				ExpiresAt: expiry,
 			}
 		}
-		fmt.Printf("\n🔑 [SECURITY AUTH OTP] Copy this SHA-256 token to login for UID %s (%s):\n--> %s\n\n", uid, username, token)
+		// Write to a local file for operator retrieval without exposing secrets in Docker stdout/stderr logs
+		otpMsg := fmt.Sprintf("🔑 [SECURITY AUTH OTP] Copy this SHA-256 token to login for UID %s (%s):\n--> %s\n", uid, username, token)
+		_ = os.WriteFile("otp.txt", []byte(otpMsg), 0600)
+		log.Printf("[SECURITY AUTH] One-time password generated for authentication request.")
 	} else {
 		// Mock delay to prevent timing attacks / account enumeration
 		time.Sleep(50 * time.Millisecond)
