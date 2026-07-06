@@ -41,9 +41,15 @@ func GetSummary(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	summary.AlertCount24h = len(store.DB.Alerts)
+	cutoff := time.Now().Add(-24 * time.Hour)
+	alertCount := 0
 
 	for _, alt := range store.DB.Alerts {
+		if alt.Timestamp.Before(cutoff) {
+			continue
+		}
+		alertCount++
+
 		switch alt.Severity {
 		case "critical":
 			summary.CriticalAlerts++
@@ -60,6 +66,8 @@ func GetSummary(w http.ResponseWriter, r *http.Request) {
 			summary.MitreCoverage[alt.MITRETechnique]++
 		}
 	}
+
+	summary.AlertCount24h = alertCount
 
 	// Threat Level Calculation
 	if summary.CriticalAlerts > 2 {

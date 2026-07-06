@@ -118,7 +118,7 @@ export default function App() {
           timeRange={timeRange} setTimeRange={setTimeRange} onRefresh={refreshAllData}
           currentUser={user} />;
       case 'soar-metrics':
-        return <SoarPerformanceDashboard actions={actions} />;
+        return <SoarPerformanceDashboard actions={actions} alerts={alerts} />;
       case 'agents':
         return <AgentManager agents={agents} />;
       case 'fim':
