@@ -8,6 +8,7 @@ import (
 
 	"dashboard/backend/consumer"
 	"dashboard/backend/handlers"
+	"dashboard/backend/processor"
 	"dashboard/backend/store"
 )
 
@@ -33,6 +34,9 @@ func main() {
 
 	// Start Kafka Consumer for real-time security event ingestion
 	consumer.StartKafkaConsumer(context.Background())
+
+	// Start L0 -> L2 Log Processor & Enrichment Engine
+	processor.StartLogProcessor(context.Background())
 
 	mux := http.NewServeMux()
 
