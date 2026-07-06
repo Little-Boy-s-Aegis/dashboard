@@ -323,7 +323,7 @@ func Login(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, models.LoginResponse{
 		UID:          uid,
 		Username:     username,
-		SessionToken: sessionToken,
+		SessionToken: "", // Redacted: Session token is only sent via HttpOnly cookie
 		ExpiresAt:    expiresAt,
 	})
 }
@@ -498,9 +498,6 @@ func AuthMiddleware(next http.Handler) http.Handler {
 			referer := r.Header.Get("Referer")
 			
 			isValidOrigin := origin == "http://localhost:5173" || strings.HasPrefix(referer, "http://localhost:5173")
-			if origin == "" && referer == "" {
-				isValidOrigin = true // allow if both empty (e.g. same origin direct request)
-			}
 
 			if !isValidOrigin {
 				log.Printf("[SECURITY ALERT] CSRF or forbidden origin request blocked! Origin: %s, Referer: %s", origin, referer)

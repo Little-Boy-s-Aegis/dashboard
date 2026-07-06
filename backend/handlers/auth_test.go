@@ -650,6 +650,16 @@ func TestAuthMiddleware(t *testing.T) {
 		}
 	})
 
+	t.Run("CSRF Check Fail - Empty Origin/Referer", func(t *testing.T) {
+		setupTestStores()
+		req := httptest.NewRequest("POST", "/api/protected-route", nil)
+		w := httptest.NewRecorder()
+		wrapped.ServeHTTP(w, req)
+		if w.Code != http.StatusForbidden {
+			t.Errorf("Expected status 403 Forbidden on empty Origin/Referer, got %d", w.Code)
+		}
+	})
+
 	t.Run("Expired session in Middleware", func(t *testing.T) {
 		setupTestStores()
 		expiredToken := "expired-middleware-token"
