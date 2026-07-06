@@ -318,7 +318,7 @@ func Login(w http.ResponseWriter, r *http.Request) {
 		Path:     "/",
 		Expires:  expiresAt,
 		HttpOnly: true,
-		Secure:   false, // Set to true in prod (HTTPS)
+		Secure:   true, // Set to true to enforce HTTPS/secure transmission
 		SameSite: http.SameSiteLaxMode,
 	}
 	http.SetCookie(w, cookie)
@@ -374,7 +374,7 @@ func Logout(w http.ResponseWriter, r *http.Request) {
 		Path:     "/",
 		Expires:  time.Unix(0, 0),
 		HttpOnly: true,
-		Secure:   false,
+		Secure:   true, // Set to true to enforce HTTPS/secure transmission
 		SameSite: http.SameSiteLaxMode,
 	}
 	http.SetCookie(w, clearCookie)
