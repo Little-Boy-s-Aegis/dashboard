@@ -507,7 +507,7 @@ export default function DashboardOverview({ summary, recentAlerts, agents, actio
             </h3>
             <p style={{ fontSize: '0.72rem', color: 'var(--text-3)', margin: '3px 0 8px' }}>Active automated containment and response logs</p>
             <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-              {actions.filter(act => act.actor === 'AI Agent').slice(0, 4).map(act => (
+              {actions.filter(act => act.actor.includes('SOAR') || act.actor.includes('AI') || act.actor === 'AI Agent').slice(0, 4).map(act => (
                 <div key={act.id} style={{
                   padding: '8px 10px', background: 'var(--bg-surface)', border: '1px solid var(--border-0)',
                   borderRadius: 'var(--r-xs)', fontSize: '0.76rem', display: 'flex', flexDirection: 'column', gap: 2
@@ -522,7 +522,7 @@ export default function DashboardOverview({ summary, recentAlerts, agents, actio
                   </div>
                 </div>
               ))}
-              {actions.filter(act => act.actor === 'AI Agent').length === 0 && (
+              {actions.filter(act => act.actor.includes('SOAR') || act.actor.includes('AI') || act.actor === 'AI Agent').length === 0 && (
                 <p style={{ textAlign: 'center', padding: '12px 0', color: 'var(--text-3)', fontSize: '0.78rem' }}>No AI mitigations triggered yet.</p>
               )}
             </div>
