@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { Shield, AlertTriangle, Monitor, FileText, Terminal, Activity, Clock, Zap, LogOut, User, RefreshCw } from 'lucide-react';
+import { Shield, AlertTriangle, Monitor, FileText, Terminal, Activity, Clock, Zap, LogOut, User, RefreshCw, Cpu } from 'lucide-react';
 import type { Agent, Alert, FIMEvent, DashboardSummary, ActionLog } from './types';
 import DashboardOverview from './components/DashboardOverview';
 import AlertsManager from './components/AlertsManager';
@@ -7,6 +7,7 @@ import AgentManager from './components/AgentManager';
 import FimDashboard from './components/FimDashboard';
 import LogExplorer from './components/LogExplorer';
 import ResponseCenter from './components/ResponseCenter';
+import SoarPerformanceDashboard from './components/SoarPerformanceDashboard';
 import Login from './components/Login';
 
 export default function App() {
@@ -116,6 +117,8 @@ export default function App() {
         return <ResponseCenter agents={agents} alerts={alerts} actions={actions}
           timeRange={timeRange} setTimeRange={setTimeRange} onRefresh={refreshAllData}
           currentUser={user} />;
+      case 'soar-metrics':
+        return <SoarPerformanceDashboard actions={actions} />;
       case 'agents':
         return <AgentManager agents={agents} />;
       case 'fim':
@@ -134,6 +137,7 @@ export default function App() {
     { key: 'overview', icon: Activity, label: 'Overview' },
     { key: 'alerts', icon: AlertTriangle, label: 'Alerts', badge: totalActive },
     { key: 'actions', icon: Zap, label: 'Response Center' },
+    { key: 'soar-metrics', icon: Cpu, label: 'SOAR Performance' },
     { key: 'agents', icon: Monitor, label: 'Hosts' },
     { key: 'fim', icon: FileText, label: 'File Integrity' },
     { key: 'logs', icon: Terminal, label: 'Logs' },
