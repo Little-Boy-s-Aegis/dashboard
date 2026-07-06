@@ -49,15 +49,21 @@ type FIMEvent struct {
 }
 
 type LogEntry struct {
-	ID         string    `json:"id"`
-	Timestamp  time.Time `json:"timestamp"`
-	AgentID    string    `json:"agentId"`
-	AgentName  string    `json:"agentName"`
-	Facility   string    `json:"facility"` // auth, syslog, daemon, web
-	Severity   string    `json:"severity"` // info, warning, error, alert
-	Message    string    `json:"message"`
-	SourceIP   string    `json:"sourceIp,omitempty"`
-	StatusCode int       `json:"statusCode,omitempty"`
+	ID             string    `json:"id"`
+	Timestamp      time.Time `json:"timestamp"`
+	AgentID        string    `json:"agentId"`
+	AgentName      string    `json:"agentName"`
+	Facility       string    `json:"facility"` // auth, syslog, daemon, web
+	Severity       string    `json:"severity"` // info, warning, error, alert
+	Message        string    `json:"message"`
+	SourceIP       string    `json:"sourceIp,omitempty"`
+	StatusCode     int       `json:"statusCode,omitempty"`
+	GeoIP          string    `json:"geoIp,omitempty"`
+	ASN            string    `json:"asn,omitempty"`
+	AssetCritical  string    `json:"assetCritical,omitempty"`
+	ThreatFlagged  bool      `json:"threatFlagged,omitempty"`
+	ThreatType     string    `json:"threatType,omitempty"`
+	DecodedPayload string    `json:"decodedPayload,omitempty"`
 }
 
 type AIAnalysis struct {
