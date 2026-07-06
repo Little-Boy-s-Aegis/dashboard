@@ -397,7 +397,16 @@ func SaveSQLAlert(alert *models.Alert) error {
 		INSERT INTO alerts(id, rule_id, severity, title, description, agent_id, agent_name, mitre_technique, mitre_tactics, category, timestamp, raw_log, status, assignee)
 		VALUES($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
 		ON CONFLICT (id) DO UPDATE
-		SET status = EXCLUDED.status, assignee = EXCLUDED.assignee
+		SET severity = EXCLUDED.severity,
+			title = EXCLUDED.title,
+			description = EXCLUDED.description,
+			mitre_technique = EXCLUDED.mitre_technique,
+			mitre_tactics = EXCLUDED.mitre_tactics,
+			category = EXCLUDED.category,
+			timestamp = EXCLUDED.timestamp,
+			raw_log = EXCLUDED.raw_log,
+			status = EXCLUDED.status,
+			assignee = EXCLUDED.assignee
 	`, alert.ID, alert.RuleID, alert.Severity, alert.Title, alert.Description, alert.AgentID, alert.AgentName, alert.MITRETechnique, tacsStr, alert.Category, alert.Timestamp, alert.RawLog, alert.Status, alert.Assignee)
 	return err
 }
@@ -497,6 +506,25 @@ func LoadSQLLogEntries() ([]*models.LogEntry, error) {
 			l.ECSEventCat = strings.Split(catStr, ",")
 		} else {
 			l.ECSEventCat = []string{}
+		}
+		logs = append(logs, &l)
+	}
+	return logs, nil
+}
+
+func LoadSQLActionLogs() ([]*models.ActionLog, error) {
+	rows, err := SQL.Query("SELECT id, timestamp, actor, action_type, target, status, message FROM action_logs ORDER BY timestamp ASC")
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var logs []*models.ActionLog
+	for rows.Next() {
+		var l models.ActionLog
+		err := rows.Scan(&l.ID, &l.Timestamp, &l.Actor, &l.ActionType, &l.Target, &l.Status, &l.Message)
+		if err != nil {
+			return nil, err
 		}
 		logs = append(logs, &l)
 	}

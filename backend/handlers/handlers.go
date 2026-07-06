@@ -537,6 +537,7 @@ func ResolveAlert(w http.ResponseWriter, r *http.Request) {
 	}
 
 	alert.Status = "resolved"
+	store.DB.SaveAlert(alert)
 
 	// Resolve agent status if no other high/critical open alerts exist for this agent
 	agentID := alert.AgentID
@@ -551,6 +552,7 @@ func ResolveAlert(w http.ResponseWriter, r *http.Request) {
 	if !hasOtherCriticals {
 		if agent, exists := store.DB.Agents[agentID]; exists {
 			agent.Status = "active"
+			store.DB.SaveAgent(agent)
 		}
 	}
 
@@ -603,6 +605,7 @@ func AssignAlert(w http.ResponseWriter, r *http.Request) {
 	if req.Assignee != "" && alert.Status == "open" {
 		alert.Status = "investigating"
 	}
+	store.DB.SaveAlert(alert)
 
 	writeJSON(w, http.StatusOK, map[string]interface{}{
 		"message": "Alert assignee updated",
@@ -636,6 +639,7 @@ func BulkResolveAlerts(w http.ResponseWriter, r *http.Request) {
 		for _, alt := range store.DB.Alerts {
 			if alt.ID == id {
 				alt.Status = "resolved"
+				store.DB.SaveAlert(alt)
 				affectedAgents[alt.AgentID] = true
 				resolvedCount++
 				break
@@ -655,6 +659,7 @@ func BulkResolveAlerts(w http.ResponseWriter, r *http.Request) {
 		if !hasOtherCriticals {
 			if agent, exists := store.DB.Agents[agentID]; exists {
 				agent.Status = "active"
+				store.DB.SaveAgent(agent)
 			}
 		}
 	}
@@ -693,6 +698,7 @@ func BulkAssignAlerts(w http.ResponseWriter, r *http.Request) {
 				if req.Assignee != "" && alt.Status == "open" {
 					alt.Status = "investigating"
 				}
+				store.DB.SaveAlert(alt)
 				assignedCount++
 				break
 			}
