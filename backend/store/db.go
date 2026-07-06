@@ -4,8 +4,10 @@ import (
 	"database/sql"
 	"log"
 	"os"
+	"strings"
 	"time"
 
+	"dashboard/backend/models"
 	_ "github.com/lib/pq"
 )
 
@@ -49,6 +51,7 @@ func InitDB() {
 
 	runMigrations()
 	seedOperators()
+	DB.persistSeed()
 }
 
 func runMigrations() {
@@ -115,6 +118,110 @@ func runMigrations() {
 	`)
 	if err != nil {
 		log.Fatalf("Migration failed (action_logs): %v", err)
+	}
+
+	// 5. Agents Table
+	_, err = SQL.Exec(`
+		CREATE TABLE IF NOT EXISTS agents (
+			id VARCHAR(50) PRIMARY KEY,
+			name VARCHAR(100) NOT NULL,
+			ip VARCHAR(45) NOT NULL,
+			os VARCHAR(100) NOT NULL,
+			status VARCHAR(20) NOT NULL,
+			cpu_usage DOUBLE PRECISION NOT NULL,
+			ram_usage DOUBLE PRECISION NOT NULL,
+			disk_usage DOUBLE PRECISION NOT NULL,
+			network_in DOUBLE PRECISION NOT NULL,
+			network_out DOUBLE PRECISION NOT NULL,
+			threat_score INT NOT NULL DEFAULT 0,
+			last_seen TIMESTAMP WITH TIME ZONE NOT NULL
+		)
+	`)
+	if err != nil {
+		log.Fatalf("Migration failed (agents): %v", err)
+	}
+
+	// 6. Log Entries Table (ECS Compliant)
+	_, err = SQL.Exec(`
+		CREATE TABLE IF NOT EXISTS log_entries (
+			id VARCHAR(50) PRIMARY KEY,
+			timestamp TIMESTAMP WITH TIME ZONE NOT NULL,
+			agent_id VARCHAR(50) NOT NULL,
+			agent_name VARCHAR(100) NOT NULL,
+			facility VARCHAR(50) NOT NULL,
+			severity VARCHAR(20) NOT NULL,
+			message TEXT NOT NULL,
+			source_ip VARCHAR(45) NOT NULL,
+			status_code INT NOT NULL,
+			geo_ip VARCHAR(100) NOT NULL,
+			asn VARCHAR(200) NOT NULL,
+			asset_critical VARCHAR(20) NOT NULL,
+			threat_flagged BOOLEAN NOT NULL DEFAULT FALSE,
+			threat_type VARCHAR(100),
+			decoded_payload TEXT,
+			ecs_timestamp VARCHAR(100),
+			ecs_log_level VARCHAR(20),
+			ecs_event_dataset VARCHAR(100),
+			ecs_event_id VARCHAR(50),
+			ecs_source_ip VARCHAR(45),
+			ecs_http_status INT,
+			ecs_geo_country VARCHAR(100),
+			ecs_asn_name VARCHAR(200),
+			ecs_service_name VARCHAR(100),
+			ecs_url_original TEXT,
+			ecs_agent_id VARCHAR(50),
+			ecs_agent_name VARCHAR(100),
+			ecs_agent_type VARCHAR(50),
+			ecs_event_category TEXT,
+			ecs_event_kind VARCHAR(50),
+			ecs_event_outcome VARCHAR(50)
+		)
+	`)
+	if err != nil {
+		log.Fatalf("Migration failed (log_entries): %v", err)
+	}
+
+	// 7. Alerts Table
+	_, err = SQL.Exec(`
+		CREATE TABLE IF NOT EXISTS alerts (
+			id VARCHAR(50) PRIMARY KEY,
+			rule_id VARCHAR(50) NOT NULL,
+			severity VARCHAR(20) NOT NULL,
+			title VARCHAR(200) NOT NULL,
+			description TEXT NOT NULL,
+			agent_id VARCHAR(50) NOT NULL,
+			agent_name VARCHAR(100) NOT NULL,
+			mitre_technique VARCHAR(50) NOT NULL,
+			mitre_tactics TEXT NOT NULL,
+			category VARCHAR(50) NOT NULL,
+			timestamp TIMESTAMP WITH TIME ZONE NOT NULL,
+			raw_log TEXT NOT NULL,
+			status VARCHAR(20) NOT NULL,
+			assignee VARCHAR(100) NOT NULL
+		)
+	`)
+	if err != nil {
+		log.Fatalf("Migration failed (alerts): %v", err)
+	}
+
+	// 8. FIM Events Table
+	_, err = SQL.Exec(`
+		CREATE TABLE IF NOT EXISTS fim_events (
+			id VARCHAR(50) PRIMARY KEY,
+			timestamp TIMESTAMP WITH TIME ZONE NOT NULL,
+			agent_id VARCHAR(50) NOT NULL,
+			agent_name VARCHAR(100) NOT NULL,
+			file_path TEXT NOT NULL,
+			event_type VARCHAR(20) NOT NULL,
+			size BIGINT NOT NULL,
+			md5 VARCHAR(32) NOT NULL,
+			sha256 VARCHAR(64) NOT NULL,
+			user_name VARCHAR(100) NOT NULL,
+			process_name VARCHAR(100) NOT NULL
+		)
+	`)
+	if err != nil {
+		log.Fatalf("Migration failed (fim_events): %v", err)
 	}
 
 	log.Printf("[DATABASE] Schema migrations completed successfully.")
@@ -227,4 +334,152 @@ func CleanExpiredSQLSessions() {
 	if err != nil {
 		log.Printf("[DATABASE ERROR] Failed to clean expired sessions: %v", err)
 	}
+}
+
+// SQL Persistence Save Helpers
+func SaveSQLAgent(agent *models.Agent) error {
+	if !UsePostgres {
+		return nil
+	}
+	_, err := SQL.Exec(`
+		INSERT INTO agents(id, name, ip, os, status, cpu_usage, ram_usage, disk_usage, network_in, network_out, threat_score, last_seen)
+		VALUES($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+		ON CONFLICT (id) DO UPDATE
+		SET name = EXCLUDED.name, ip = EXCLUDED.ip, os = EXCLUDED.os, status = EXCLUDED.status,
+			cpu_usage = EXCLUDED.cpu_usage, ram_usage = EXCLUDED.ram_usage, disk_usage = EXCLUDED.disk_usage,
+			network_in = EXCLUDED.network_in, network_out = EXCLUDED.network_out, threat_score = EXCLUDED.threat_score,
+			last_seen = EXCLUDED.last_seen
+	`, agent.ID, agent.Name, agent.IP, agent.OS, agent.Status, agent.CPUUsage, agent.RAMUsage, agent.DiskUsage, agent.NetworkIn, agent.NetworkOut, agent.ThreatScore, agent.LastSeen)
+	return err
+}
+
+func SaveSQLLogEntry(logEntry *models.LogEntry) error {
+	if !UsePostgres {
+		return nil
+	}
+	var catStr string
+	if len(logEntry.ECSEventCat) > 0 {
+		catStr = strings.Join(logEntry.ECSEventCat, ",")
+	}
+	_, err := SQL.Exec(`
+		INSERT INTO log_entries(id, timestamp, agent_id, agent_name, facility, severity, message, source_ip, status_code, geo_ip, asn, asset_critical, threat_flagged, threat_type, decoded_payload, ecs_timestamp, ecs_log_level, ecs_event_dataset, ecs_event_id, ecs_source_ip, ecs_http_status, ecs_geo_country, ecs_asn_name, ecs_service_name, ecs_url_original, ecs_agent_id, ecs_agent_name, ecs_agent_type, ecs_event_category, ecs_event_kind, ecs_event_outcome)
+		VALUES($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $28, $29, $30, $31)
+		ON CONFLICT (id) DO NOTHING
+	`, logEntry.ID, logEntry.Timestamp, logEntry.AgentID, logEntry.AgentName, logEntry.Facility, logEntry.Severity, logEntry.Message, logEntry.SourceIP, logEntry.StatusCode, logEntry.GeoIP, logEntry.ASN, logEntry.AssetCritical, logEntry.ThreatFlagged, logEntry.ThreatType, logEntry.DecodedPayload, logEntry.ECSTimestamp, logEntry.ECSLogLevel, logEntry.ECSEventDataset, logEntry.ECSEventID, logEntry.ECSSourceIP, logEntry.ECSHTTPStatus, logEntry.ECSGeoCountry, logEntry.ECSASNName, logEntry.ECSServiceName, logEntry.ECSURLOriginal, logEntry.ECSAgentID, logEntry.ECSAgentName, logEntry.ECSAgentType, catStr, logEntry.ECSEventKind, logEntry.ECSEventOutcome)
+	return err
+}
+
+func SaveSQLAlert(alert *models.Alert) error {
+	if !UsePostgres {
+		return nil
+	}
+	tacsStr := strings.Join(alert.MITRETactics, ",")
+	_, err := SQL.Exec(`
+		INSERT INTO alerts(id, rule_id, severity, title, description, agent_id, agent_name, mitre_technique, mitre_tactics, category, timestamp, raw_log, status, assignee)
+		VALUES($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
+		ON CONFLICT (id) DO UPDATE
+		SET status = EXCLUDED.status, assignee = EXCLUDED.assignee
+	`, alert.ID, alert.RuleID, alert.Severity, alert.Title, alert.Description, alert.AgentID, alert.AgentName, alert.MITRETechnique, tacsStr, alert.Category, alert.Timestamp, alert.RawLog, alert.Status, alert.Assignee)
+	return err
+}
+
+func SaveSQLFIMEvent(fim *models.FIMEvent) error {
+	if !UsePostgres {
+		return nil
+	}
+	_, err := SQL.Exec(`
+		INSERT INTO fim_events(id, timestamp, agent_id, agent_name, file_path, event_type, size, md5, sha256, user_name, process_name)
+		VALUES($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+		ON CONFLICT (id) DO NOTHING
+	`, fim.ID, fim.Timestamp, fim.AgentID, fim.AgentName, fim.FilePath, fim.EventType, fim.Size, fim.MD5, fim.SHA256, fim.User, fim.Process)
+	return err
+}
+
+// SQL Persistence Load Helpers
+func LoadSQLAgents() (map[string]*models.Agent, error) {
+	rows, err := SQL.Query("SELECT id, name, ip, os, status, cpu_usage, ram_usage, disk_usage, network_in, network_out, threat_score, last_seen FROM agents")
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	agents := make(map[string]*models.Agent)
+	for rows.Next() {
+		var a models.Agent
+		err := rows.Scan(&a.ID, &a.Name, &a.IP, &a.OS, &a.Status, &a.CPUUsage, &a.RAMUsage, &a.DiskUsage, &a.NetworkIn, &a.NetworkOut, &a.ThreatScore, &a.LastSeen)
+		if err != nil {
+			return nil, err
+		}
+		agents[a.ID] = &a
+	}
+	return agents, nil
+}
+
+func LoadSQLAlerts() ([]*models.Alert, error) {
+	rows, err := SQL.Query("SELECT id, rule_id, severity, title, description, agent_id, agent_name, mitre_technique, mitre_tactics, category, timestamp, raw_log, status, assignee FROM alerts ORDER BY timestamp ASC")
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var alerts []*models.Alert
+	for rows.Next() {
+		var a models.Alert
+		var tacsStr string
+		err := rows.Scan(&a.ID, &a.RuleID, &a.Severity, &a.Title, &a.Description, &a.AgentID, &a.AgentName, &a.MITRETechnique, &tacsStr, &a.Category, &a.Timestamp, &a.RawLog, &a.Status, &a.Assignee)
+		if err != nil {
+			return nil, err
+		}
+		if tacsStr != "" {
+			a.MITRETactics = strings.Split(tacsStr, ",")
+		} else {
+			a.MITRETactics = []string{}
+		}
+		alerts = append(alerts, &a)
+	}
+	return alerts, nil
+}
+
+func LoadSQLFIMEvents() ([]*models.FIMEvent, error) {
+	rows, err := SQL.Query("SELECT id, timestamp, agent_id, agent_name, file_path, event_type, size, md5, sha256, user_name, process_name FROM fim_events ORDER BY timestamp ASC")
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var events []*models.FIMEvent
+	for rows.Next() {
+		var f models.FIMEvent
+		err := rows.Scan(&f.ID, &f.Timestamp, &f.AgentID, &f.AgentName, &f.FilePath, &f.EventType, &f.Size, &f.MD5, &f.SHA256, &f.User, &f.Process)
+		if err != nil {
+			return nil, err
+		}
+		events = append(events, &f)
+	}
+	return events, nil
+}
+
+func LoadSQLLogEntries() ([]*models.LogEntry, error) {
+	rows, err := SQL.Query("SELECT id, timestamp, agent_id, agent_name, facility, severity, message, source_ip, status_code, geo_ip, asn, asset_critical, threat_flagged, threat_type, decoded_payload, ecs_timestamp, ecs_log_level, ecs_event_dataset, ecs_event_id, ecs_source_ip, ecs_http_status, ecs_geo_country, ecs_asn_name, ecs_service_name, ecs_url_original, ecs_agent_id, ecs_agent_name, ecs_agent_type, ecs_event_category, ecs_event_kind, ecs_event_outcome FROM log_entries ORDER BY timestamp ASC LIMIT 500")
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var logs []*models.LogEntry
+	for rows.Next() {
+		var l models.LogEntry
+		var catStr string
+		err := rows.Scan(&l.ID, &l.Timestamp, &l.AgentID, &l.AgentName, &l.Facility, &l.Severity, &l.Message, &l.SourceIP, &l.StatusCode, &l.GeoIP, &l.ASN, &l.AssetCritical, &l.ThreatFlagged, &l.ThreatType, &l.DecodedPayload, &l.ECSTimestamp, &l.ECSLogLevel, &l.ECSEventDataset, &l.ECSEventID, &l.ECSSourceIP, &l.ECSHTTPStatus, &l.ECSGeoCountry, &l.ECSASNName, &l.ECSServiceName, &l.ECSURLOriginal, &l.ECSAgentID, &l.ECSAgentName, &l.ECSAgentType, &catStr, &l.ECSEventKind, &l.ECSEventOutcome)
+		if err != nil {
+			return nil, err
+		}
+		if catStr != "" {
+			l.ECSEventCat = strings.Split(catStr, ",")
+		} else {
+			l.ECSEventCat = []string{}
+		}
+		logs = append(logs, &l)
+	}
+	return logs, nil
 }
