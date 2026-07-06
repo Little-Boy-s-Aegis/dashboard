@@ -53,8 +53,9 @@ export default function Login({ onLoginSuccess }: Props) {
       });
       const data = await res.json();
       if (res.ok) {
-        setOperatorName(data.username);
-        setOtpExpiry(new Date(data.expiry));
+        // Backend no longer returns username/expiry to prevent enumeration (S-02 fix)
+        setOperatorName('Operator');
+        setOtpExpiry(new Date(Date.now() + 5 * 60 * 1000)); // 5-minute client-side countdown
         setStep(2);
       } else {
         setErrorMsg(data.error || 'Failed to request login token.');

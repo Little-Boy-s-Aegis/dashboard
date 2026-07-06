@@ -80,10 +80,19 @@ func StartKafkaConsumer(ctx context.Context) {
 				src := strings.TrimSpace(event.SourceService)
 				isValidSource := src == "aegis-bank-backend" || src == "NginxGateway" || src == "BankBackend" ||
 					src == "SOAR-Action-Worker" || src == "SOAR-Guardrails" ||
-					strings.HasPrefix(src, "Fast-Path:") ||
-					(src == "external-manual-retest" && len(event.EventID) < 8)
+					strings.HasPrefix(src, "Fast-Path:")
 				if !isValidSource {
 					log.Printf("[Kafka Consumer] Discarded untrusted/forged event [%s] from source: %s", event.EventID, event.SourceService)
+					continue
+				}
+
+				// Validate required fields to prevent crash paths and malformed data injection
+				if len(strings.TrimSpace(event.EventID)) < 8 {
+					log.Printf("[Kafka Consumer] Rejected malformed event: eventId too short (%d chars) from source: %s", len(event.EventID), event.SourceService)
+					continue
+				}
+				if strings.TrimSpace(event.AttackType) == "" {
+					log.Printf("[Kafka Consumer] Rejected malformed event [%s]: empty attackType from source: %s", event.EventID, event.SourceService)
 					continue
 				}
 

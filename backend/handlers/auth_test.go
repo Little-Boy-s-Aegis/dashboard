@@ -233,10 +233,17 @@ func TestRequestTokenHandler(t *testing.T) {
 		if w.Code != http.StatusOK {
 			t.Errorf("Expected status 200, got %d", w.Code)
 		}
-		var res models.AuthResponse
+		// S-02 fix: response must be a generic message with no uid/username/token/expiry fields
+		var res map[string]string
 		json.Unmarshal(w.Body.Bytes(), &res)
-		if res.Username != "Operator" || res.Token != "" {
-			t.Errorf("Expected uniform response with username 'Operator' and empty token, got %+v", res)
+		if _, hasMessage := res["message"]; !hasMessage {
+			t.Errorf("Expected generic 'message' field in response, got %+v", res)
+		}
+		if _, hasUID := res["uid"]; hasUID {
+			t.Error("Response must NOT contain 'uid' field to prevent enumeration")
+		}
+		if _, hasUsername := res["username"]; hasUsername {
+			t.Error("Response must NOT contain 'username' field to prevent enumeration")
 		}
 	})
 

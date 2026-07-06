@@ -882,12 +882,9 @@ func HandleInternalSoarDecision(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// 1. Verify internal secret key
+	// 1. Verify internal secret key (I-01 fix: no hardcoded fallback)
 	internalToken := os.Getenv("AEGIS_INTERNAL_TOKEN")
-	if internalToken == "" {
-		internalToken = "aegis-secret-security-sync-token-2026"
-	}
-	if r.Header.Get("X-Aegis-Internal-Key") != internalToken {
+	if internalToken == "" || r.Header.Get("X-Aegis-Internal-Key") != internalToken {
 		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "Unauthorized: Invalid internal secret key"})
 		return
 	}
