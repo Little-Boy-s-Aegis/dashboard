@@ -837,7 +837,12 @@ func (db *Database) syncBankSecurityLogs() {
 	if err != nil {
 		return
 	}
-	req.Header.Set("X-Aegis-Token", "aegis-secret-security-sync-token-2026")
+	// I-01 fix: use env var instead of hardcoded secret
+	syncToken := os.Getenv("AEGIS_INTERNAL_TOKEN")
+	if syncToken == "" {
+		return
+	}
+	req.Header.Set("X-Aegis-Token", syncToken)
 
 	resp, err := client.Do(req)
 	if err != nil {

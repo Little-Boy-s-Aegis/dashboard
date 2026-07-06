@@ -176,8 +176,7 @@ func RequestToken(w http.ResponseWriter, r *http.Request) {
 		username, isAllowed = allowedUIDs[uid]
 	}
 
-	// Always use a generic username to prevent leaking information
-	displayUsername := "Operator"
+
 
 	// 3. Generate token
 	token := generateSecureSHA256Token()
@@ -225,12 +224,10 @@ func RequestToken(w http.ResponseWriter, r *http.Request) {
 		time.Sleep(50 * time.Millisecond)
 	}
 
-	// Send back response
-	writeJSON(w, http.StatusOK, models.AuthResponse{
-		UID:      uid,
-		Username: displayUsername,
-		Token:    "", // Redacted: OTP is only printed in the server logs, not disclosed in response
-		Expiry:   expiry,
+	// Send back a generic acknowledgment — identical for both valid and invalid UIDs
+	// to prevent account enumeration. No uid/username/token/expiry fields are exposed.
+	writeJSON(w, http.StatusOK, map[string]string{
+		"message": "If the UID is valid, a one-time password has been generated. Check the secure OTP channel.",
 	})
 }
 
@@ -531,12 +528,9 @@ func AuthMiddleware(next http.Handler) http.Handler {
 			return
 		}
 
-		// Service-to-service auth bypass using internal key
+		// Service-to-service auth bypass using internal key (I-01 fix: no hardcoded fallback)
 		internalToken := os.Getenv("AEGIS_INTERNAL_TOKEN")
-		if internalToken == "" {
-			internalToken = "aegis-secret-security-sync-token-2026"
-		}
-		if r.Header.Get("X-Aegis-Internal-Key") == internalToken {
+		if internalToken != "" && r.Header.Get("X-Aegis-Internal-Key") == internalToken {
 			next.ServeHTTP(w, r)
 			return
 		}
