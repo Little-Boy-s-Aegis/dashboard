@@ -43,6 +43,40 @@ func init() {
 	go DB.startSimulator()
 }
 
+func populateECSFields(entry *models.LogEntry) {
+	if entry == nil {
+		return
+	}
+	entry.ECSTimestamp = entry.Timestamp.Format(time.RFC3339Nano)
+	entry.ECSLogLevel = entry.Severity
+	entry.ECSEventDataset = fmt.Sprintf("%s.logs", entry.Facility)
+	entry.ECSEventID = entry.ID
+	entry.ECSSourceIP = entry.SourceIP
+	entry.ECSHTTPStatus = entry.StatusCode
+	entry.ECSServiceName = entry.AgentName
+	entry.ECSURLOriginal = entry.DecodedPayload
+	entry.ECSAgentID = entry.AgentID
+	entry.ECSAgentName = entry.AgentName
+	entry.ECSAgentType = "fluent-bit"
+
+	if entry.Facility == "web" || entry.Facility == "apigw" || entry.Facility == "waf" {
+		entry.ECSEventCat = []string{"web"}
+	} else {
+		entry.ECSEventCat = []string{"process"}
+	}
+	entry.ECSEventKind = "event"
+	if entry.StatusCode >= 400 || entry.Severity == "alert" || entry.Severity == "error" || entry.Severity == "critical" || entry.Severity == "warning" {
+		entry.ECSEventOutcome = "failure"
+	} else {
+		entry.ECSEventOutcome = "success"
+	}
+}
+
+func (db *Database) AddLog(entry *models.LogEntry) {
+	populateECSFields(entry)
+	db.Logs = append(db.Logs, entry)
+}
+
 func (db *Database) seed() {
 	db.Mu.Lock()
 	defer db.Mu.Unlock()
@@ -197,7 +231,7 @@ func (db *Database) seed() {
 		timeAgo := time.Duration(100-i) * 10 * time.Minute
 		logTime := time.Now().Add(-timeAgo)
 
-		db.Logs = append(db.Logs, &models.LogEntry{
+		db.AddLog(&models.LogEntry{
 			ID:         logID,
 			Timestamp:  logTime,
 			AgentID:    agent.ID,
@@ -324,7 +358,7 @@ func (db *Database) startSimulator() {
 					msg = msgs[rand.Intn(len(msgs))]
 				}
 
-				db.Logs = append(db.Logs, &models.LogEntry{
+				db.AddLog(&models.LogEntry{
 					ID:         fmt.Sprintf("log-%05d", db.LogCounter),
 					Timestamp:  time.Now(),
 					AgentID:    agent.ID,
@@ -495,7 +529,7 @@ func (db *Database) SimulateAttack(agentID string, attackType string) string {
 
 		// Write matching threat logs
 		db.LogCounter++
-		db.Logs = append(db.Logs, &models.LogEntry{
+		db.AddLog(&models.LogEntry{
 			ID:        fmt.Sprintf("log-%05d", db.LogCounter),
 			Timestamp: now,
 			AgentID:   agent.ID,
@@ -505,7 +539,7 @@ func (db *Database) SimulateAttack(agentID string, attackType string) string {
 			Message:   "VSS Backup service stopped unexpectedly. Event ID: 7036.",
 		})
 		db.LogCounter++
-		db.Logs = append(db.Logs, &models.LogEntry{
+		db.AddLog(&models.LogEntry{
 			ID:        fmt.Sprintf("log-%05d", db.LogCounter),
 			Timestamp: now.Add(100 * time.Millisecond),
 			AgentID:   agent.ID,
@@ -541,7 +575,7 @@ func (db *Database) SimulateAttack(agentID string, attackType string) string {
 		// Append multiple failed login logs
 		for i := 0; i < 5; i++ {
 			db.LogCounter++
-			db.Logs = append(db.Logs, &models.LogEntry{
+			db.AddLog(&models.LogEntry{
 				ID:        fmt.Sprintf("log-%05d", db.LogCounter),
 				Timestamp: now.Add(time.Duration(-i) * time.Second),
 				AgentID:   agent.ID,
@@ -554,7 +588,7 @@ func (db *Database) SimulateAttack(agentID string, attackType string) string {
 		}
 		// Final success simulation showing compromised entry (or just keeping it failed)
 		db.LogCounter++
-		db.Logs = append(db.Logs, &models.LogEntry{
+		db.AddLog(&models.LogEntry{
 			ID:        fmt.Sprintf("log-%05d", db.LogCounter),
 			Timestamp: now.Add(100 * time.Millisecond),
 			AgentID:   agent.ID,
@@ -605,7 +639,7 @@ func (db *Database) SimulateAttack(agentID string, attackType string) string {
 
 		// Logs
 		db.LogCounter++
-		db.Logs = append(db.Logs, &models.LogEntry{
+		db.AddLog(&models.LogEntry{
 			ID:        fmt.Sprintf("log-%05d", db.LogCounter),
 			Timestamp: now,
 			AgentID:   agent.ID,
@@ -753,7 +787,7 @@ func (db *Database) syncBankSecurityLogs() {
 			})
 
 			db.LogCounter++
-			db.Logs = append(db.Logs, &models.LogEntry{
+			db.AddLog(&models.LogEntry{
 				ID:         fmt.Sprintf("log-%05d", db.LogCounter),
 				Timestamp:  time.Now(),
 				AgentID:    "agent-01",
