@@ -62,6 +62,8 @@ func main() {
 		}
 		if strings.HasSuffix(r.URL.Path, "/analyze") {
 			handlers.AnalyzeAlert(w, r)
+		} else if strings.HasSuffix(r.URL.Path, "/analysis") {
+			handlers.SaveAIAnalysis(w, r)
 		} else if strings.HasSuffix(r.URL.Path, "/resolve") {
 			handlers.ResolveAlert(w, r)
 		} else if strings.HasSuffix(r.URL.Path, "/assign") {
