@@ -125,9 +125,10 @@ func ingestSecurityEvent(event *SecurityEvent) {
 	agent := db.Agents["agent-01"]
 	if agent != nil {
 		agent.Status = "alerting"
+		db.SaveAgent(agent)
 	}
 
-	db.Alerts = append(db.Alerts, &models.Alert{
+	db.AddAlert(&models.Alert{
 		ID:             alertID,
 		RuleID:         fmt.Sprintf("rule-kafka-%s", event.EventID[:8]),
 		Severity:       severity,
@@ -145,7 +146,7 @@ func ingestSecurityEvent(event *SecurityEvent) {
 
 	// Create Log Entry
 	db.LogCounter++
-	db.Logs = append(db.Logs, &models.LogEntry{
+	db.AddLog(&models.LogEntry{
 		ID:        fmt.Sprintf("log-%05d", db.LogCounter),
 		Timestamp: time.Now(),
 		AgentID:   "agent-01",
@@ -157,9 +158,6 @@ func ingestSecurityEvent(event *SecurityEvent) {
 	})
 
 	// Trim old data
-	if len(db.Alerts) > 100 {
-		db.Alerts = db.Alerts[len(db.Alerts)-100:]
-	}
 	if len(db.Logs) > 500 {
 		db.Logs = db.Logs[len(db.Logs)-500:]
 	}

@@ -73,7 +73,7 @@ func pushToDashboardStore(logEntry *models.LogEntry) {
 
 	// Append log entry
 	db.LogCounter++
-	db.Logs = append(db.Logs, logEntry)
+	db.AddLog(logEntry)
 
 	// If old data grows, trim it
 	if len(db.Logs) > 500 {

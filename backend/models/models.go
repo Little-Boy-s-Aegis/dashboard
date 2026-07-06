@@ -76,6 +76,12 @@ type LogEntry struct {
 	ECSASNName     string    `json:"source.as.organization.name,omitempty"`
 	ECSServiceName string    `json:"service.name"`
 	ECSURLOriginal string    `json:"url.original,omitempty"`
+	ECSAgentID     string    `json:"agent.id"`
+	ECSAgentName   string    `json:"agent.name"`
+	ECSAgentType   string    `json:"agent.type"`
+	ECSEventCat    []string  `json:"event.category,omitempty"`
+	ECSEventKind   string    `json:"event.kind"`
+	ECSEventOutcome string   `json:"event.outcome"`
 }
 
 type AIAnalysis struct {

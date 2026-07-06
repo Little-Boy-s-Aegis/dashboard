@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/json"
 	"fmt"
+	"log"
 	"math/rand"
 	"net/http"
 	"strings"
@@ -41,6 +42,66 @@ func init() {
 	}
 	DB.seed()
 	go DB.startSimulator()
+}
+
+func populateECSFields(entry *models.LogEntry) {
+	if entry == nil {
+		return
+	}
+	entry.ECSTimestamp = entry.Timestamp.Format(time.RFC3339Nano)
+	entry.ECSLogLevel = entry.Severity
+	entry.ECSEventDataset = fmt.Sprintf("%s.logs", entry.Facility)
+	entry.ECSEventID = entry.ID
+	entry.ECSSourceIP = entry.SourceIP
+	entry.ECSHTTPStatus = entry.StatusCode
+	entry.ECSServiceName = entry.AgentName
+	entry.ECSURLOriginal = entry.DecodedPayload
+	entry.ECSAgentID = entry.AgentID
+	entry.ECSAgentName = entry.AgentName
+	entry.ECSAgentType = "fluent-bit"
+
+	if entry.Facility == "web" || entry.Facility == "apigw" || entry.Facility == "waf" {
+		entry.ECSEventCat = []string{"web"}
+	} else {
+		entry.ECSEventCat = []string{"process"}
+	}
+	entry.ECSEventKind = "event"
+	if entry.StatusCode >= 400 || entry.Severity == "alert" || entry.Severity == "error" || entry.Severity == "critical" || entry.Severity == "warning" {
+		entry.ECSEventOutcome = "failure"
+	} else {
+		entry.ECSEventOutcome = "success"
+	}
+}
+
+func (db *Database) AddLog(entry *models.LogEntry) {
+	populateECSFields(entry)
+	db.Logs = append(db.Logs, entry)
+	if UsePostgres {
+		_ = SaveSQLLogEntry(entry)
+	}
+}
+
+func (db *Database) AddAlert(alert *models.Alert) {
+	db.Alerts = append(db.Alerts, alert)
+	if len(db.Alerts) > 100 {
+		db.Alerts = db.Alerts[len(db.Alerts)-100:]
+	}
+	if UsePostgres {
+		_ = SaveSQLAlert(alert)
+	}
+}
+
+func (db *Database) AddFIMEvent(fim *models.FIMEvent) {
+	db.FIMEvents = append(db.FIMEvents, fim)
+	if UsePostgres {
+		_ = SaveSQLFIMEvent(fim)
+	}
+}
+
+func (db *Database) SaveAgent(agent *models.Agent) {
+	if UsePostgres {
+		_ = SaveSQLAgent(agent)
+	}
 }
 
 func (db *Database) seed() {
@@ -197,7 +258,7 @@ func (db *Database) seed() {
 		timeAgo := time.Duration(100-i) * 10 * time.Minute
 		logTime := time.Now().Add(-timeAgo)
 
-		db.Logs = append(db.Logs, &models.LogEntry{
+		db.AddLog(&models.LogEntry{
 			ID:         logID,
 			Timestamp:  logTime,
 			AgentID:    agent.ID,
@@ -240,6 +301,56 @@ func (db *Database) seed() {
 			Message:    act.msg,
 		})
 	}
+
+}
+
+func (db *Database) persistSeed() {
+	db.Mu.Lock()
+	defer db.Mu.Unlock()
+
+	if !UsePostgres {
+		return
+	}
+
+	loadedAgents, err := LoadSQLAgents()
+	if err == nil && len(loadedAgents) > 0 {
+		log.Printf("[DATABASE] Loaded %d agents from PostgreSQL on reconnect.", len(loadedAgents))
+		db.Agents = loadedAgents
+
+		loadedAlerts, err := LoadSQLAlerts()
+		if err == nil {
+			db.Alerts = loadedAlerts
+			db.AlertCounter = len(loadedAlerts)
+		}
+
+		loadedFim, err := LoadSQLFIMEvents()
+		if err == nil {
+			db.FIMEvents = loadedFim
+			db.FimCounter = len(loadedFim)
+		}
+
+		loadedLogs, err := LoadSQLLogEntries()
+		if err == nil {
+			db.Logs = loadedLogs
+			db.LogCounter = len(loadedLogs)
+		}
+		return
+	}
+
+	// Persist the memory-seeded data to PostgreSQL
+	for _, a := range db.Agents {
+		_ = SaveSQLAgent(a)
+	}
+	for _, a := range db.Alerts {
+		_ = SaveSQLAlert(a)
+	}
+	for _, f := range db.FIMEvents {
+		_ = SaveSQLFIMEvent(f)
+	}
+	for _, l := range db.Logs {
+		_ = SaveSQLLogEntry(l)
+	}
+	log.Printf("[DATABASE] Memory seeded entities successfully persisted to PostgreSQL.")
 }
 
 func (db *Database) startSimulator() {
@@ -268,6 +379,7 @@ func (db *Database) startSimulator() {
 					agent.RAMUsage = clamp(agent.RAMUsage+rand.Float64()*5-1, 75.0, 98.0)
 					agent.LastSeen = time.Now()
 				}
+				db.SaveAgent(agent)
 			}
 			db.updateAgentThreatsAndNetwork()
 			db.Mu.Unlock()
@@ -324,7 +436,7 @@ func (db *Database) startSimulator() {
 					msg = msgs[rand.Intn(len(msgs))]
 				}
 
-				db.Logs = append(db.Logs, &models.LogEntry{
+				db.AddLog(&models.LogEntry{
 					ID:         fmt.Sprintf("log-%05d", db.LogCounter),
 					Timestamp:  time.Now(),
 					AgentID:    agent.ID,
@@ -367,7 +479,7 @@ func (db *Database) startSimulator() {
 				}
 				opt := options[rand.Intn(len(options))]
 
-				db.Alerts = append(db.Alerts, &models.Alert{
+				db.AddAlert(&models.Alert{
 					ID:             alertID,
 					RuleID:         fmt.Sprintf("rule-20%03d", rand.Intn(100)),
 					Severity:       opt.sev,
@@ -386,18 +498,14 @@ func (db *Database) startSimulator() {
 				// If severity high/critical, set agent status to alerting
 				if opt.sev == "high" || opt.sev == "critical" {
 					agent.Status = "alerting"
-				}
-
-				// Cap alerts
-				if len(db.Alerts) > 100 {
-					db.Alerts = db.Alerts[len(db.Alerts)-100:]
+					db.SaveAgent(agent)
 				}
 
 				// Generate matching FIM event if it's a FIM alert
 				if opt.cat == "fim" {
 					db.FimCounter++
 					fimID := fmt.Sprintf("fim-%04d", db.FimCounter)
-					db.FIMEvents = append(db.FIMEvents, &models.FIMEvent{
+					db.AddFIMEvent(&models.FIMEvent{
 						ID:        fimID,
 						Timestamp: time.Now(),
 						AgentID:   agent.ID,
@@ -439,6 +547,7 @@ func (db *Database) SimulateAttack(agentID string, attackType string) string {
 	}
 
 	agent.Status = "alerting"
+	db.SaveAgent(agent)
 	now := time.Now()
 
 	switch attackType {
@@ -446,7 +555,7 @@ func (db *Database) SimulateAttack(agentID string, attackType string) string {
 		// Trigger Shadow Copy Deletion alert
 		db.AlertCounter++
 		id1 := fmt.Sprintf("alt-%04d", db.AlertCounter)
-		db.Alerts = append(db.Alerts, &models.Alert{
+		db.AddAlert(&models.Alert{
 			ID:             id1,
 			RuleID:         "rule-ransom-01",
 			Severity:       "critical",
@@ -466,7 +575,7 @@ func (db *Database) SimulateAttack(agentID string, attackType string) string {
 		files := []string{"C:\\Users\\admin\\Documents\\report.docx", "C:\\Users\\admin\\Documents\\financials.xlsx", "C:\\Users\\admin\\Pictures\\photo.png", "C:\\Users\\admin\\Desktop\\credentials.txt"}
 		for i, f := range files {
 			db.FimCounter++
-			db.FIMEvents = append(db.FIMEvents, &models.FIMEvent{
+			db.AddFIMEvent(&models.FIMEvent{
 				ID:        fmt.Sprintf("fim-%04d", db.FimCounter),
 				Timestamp: now.Add(time.Duration(i) * time.Millisecond * 100),
 				AgentID:   agent.ID,
@@ -480,7 +589,7 @@ func (db *Database) SimulateAttack(agentID string, attackType string) string {
 				Process:   "svchost_cipher.exe",
 			})
 			db.FimCounter++
-			db.FIMEvents = append(db.FIMEvents, &models.FIMEvent{
+			db.AddFIMEvent(&models.FIMEvent{
 				ID:        fmt.Sprintf("fim-%04d", db.FimCounter),
 				Timestamp: now.Add(time.Duration(i)*time.Millisecond*100 + 50*time.Millisecond),
 				AgentID:   agent.ID,
@@ -495,7 +604,7 @@ func (db *Database) SimulateAttack(agentID string, attackType string) string {
 
 		// Write matching threat logs
 		db.LogCounter++
-		db.Logs = append(db.Logs, &models.LogEntry{
+		db.AddLog(&models.LogEntry{
 			ID:        fmt.Sprintf("log-%05d", db.LogCounter),
 			Timestamp: now,
 			AgentID:   agent.ID,
@@ -505,7 +614,7 @@ func (db *Database) SimulateAttack(agentID string, attackType string) string {
 			Message:   "VSS Backup service stopped unexpectedly. Event ID: 7036.",
 		})
 		db.LogCounter++
-		db.Logs = append(db.Logs, &models.LogEntry{
+		db.AddLog(&models.LogEntry{
 			ID:        fmt.Sprintf("log-%05d", db.LogCounter),
 			Timestamp: now.Add(100 * time.Millisecond),
 			AgentID:   agent.ID,
@@ -522,7 +631,7 @@ func (db *Database) SimulateAttack(agentID string, attackType string) string {
 		db.AlertCounter++
 		id2 := fmt.Sprintf("alt-%04d", db.AlertCounter)
 		srcIP := "198.51.100.222"
-		db.Alerts = append(db.Alerts, &models.Alert{
+		db.AddAlert(&models.Alert{
 			ID:             id2,
 			RuleID:         "rule-brute-01",
 			Severity:       "high",
@@ -541,7 +650,7 @@ func (db *Database) SimulateAttack(agentID string, attackType string) string {
 		// Append multiple failed login logs
 		for i := 0; i < 5; i++ {
 			db.LogCounter++
-			db.Logs = append(db.Logs, &models.LogEntry{
+			db.AddLog(&models.LogEntry{
 				ID:        fmt.Sprintf("log-%05d", db.LogCounter),
 				Timestamp: now.Add(time.Duration(-i) * time.Second),
 				AgentID:   agent.ID,
@@ -554,7 +663,7 @@ func (db *Database) SimulateAttack(agentID string, attackType string) string {
 		}
 		// Final success simulation showing compromised entry (or just keeping it failed)
 		db.LogCounter++
-		db.Logs = append(db.Logs, &models.LogEntry{
+		db.AddLog(&models.LogEntry{
 			ID:        fmt.Sprintf("log-%05d", db.LogCounter),
 			Timestamp: now.Add(100 * time.Millisecond),
 			AgentID:   agent.ID,
@@ -571,7 +680,7 @@ func (db *Database) SimulateAttack(agentID string, attackType string) string {
 		// Trigger Malware execution alert (Lsass memory dump or mimikatz)
 		db.AlertCounter++
 		id3 := fmt.Sprintf("alt-%04d", db.AlertCounter)
-		db.Alerts = append(db.Alerts, &models.Alert{
+		db.AddAlert(&models.Alert{
 			ID:             id3,
 			RuleID:         "rule-malware-01",
 			Severity:       "critical",
@@ -589,7 +698,7 @@ func (db *Database) SimulateAttack(agentID string, attackType string) string {
 
 		// Trigger file integrity: dropping the malware bin
 		db.FimCounter++
-		db.FIMEvents = append(db.FIMEvents, &models.FIMEvent{
+		db.AddFIMEvent(&models.FIMEvent{
 			ID:        fmt.Sprintf("fim-%04d", db.FimCounter),
 			Timestamp: now.Add(-5 * time.Second),
 			AgentID:   agent.ID,
@@ -605,7 +714,7 @@ func (db *Database) SimulateAttack(agentID string, attackType string) string {
 
 		// Logs
 		db.LogCounter++
-		db.Logs = append(db.Logs, &models.LogEntry{
+		db.AddLog(&models.LogEntry{
 			ID:        fmt.Sprintf("log-%05d", db.LogCounter),
 			Timestamp: now,
 			AgentID:   agent.ID,
@@ -734,9 +843,10 @@ func (db *Database) syncBankSecurityLogs() {
 			agent := db.Agents["agent-01"]
 			if agent != nil {
 				agent.Status = "alerting"
+				db.SaveAgent(agent)
 			}
 
-			db.Alerts = append(db.Alerts, &models.Alert{
+			db.AddAlert(&models.Alert{
 				ID:             alertID,
 				RuleID:         fmt.Sprintf("rule-bank-%03d", logItem.ID),
 				Severity:       severity,
@@ -753,7 +863,7 @@ func (db *Database) syncBankSecurityLogs() {
 			})
 
 			db.LogCounter++
-			db.Logs = append(db.Logs, &models.LogEntry{
+			db.AddLog(&models.LogEntry{
 				ID:         fmt.Sprintf("log-%05d", db.LogCounter),
 				Timestamp:  time.Now(),
 				AgentID:    "agent-01",
@@ -769,9 +879,6 @@ func (db *Database) syncBankSecurityLogs() {
 	}
 
 	if hasNewAlerts {
-		if len(db.Alerts) > 100 {
-			db.Alerts = db.Alerts[len(db.Alerts)-100:]
-		}
 		if len(db.Logs) > 500 {
 			db.Logs = db.Logs[len(db.Logs)-500:]
 		}
