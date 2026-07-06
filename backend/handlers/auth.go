@@ -172,7 +172,7 @@ func RequestToken(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 		// Write to a local file for operator retrieval without exposing secrets in Docker stdout/stderr logs
-		otpMsg := fmt.Sprintf("🔑 [SECURITY AUTH OTP] Copy this SHA-256 token to login for UID %s (%s):\n--> %s\n", uid, username, token)
+		otpMsg := fmt.Sprintf("[SECURITY AUTH OTP] Copy this SHA-256 token to login for UID %s (%s):\n--> %s\n", uid, username, token)
 		_ = os.WriteFile("otp.txt", []byte(otpMsg), 0600)
 		log.Printf("[SECURITY AUTH] One-time password generated for authentication request.")
 	} else {
