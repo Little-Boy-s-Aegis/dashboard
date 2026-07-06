@@ -230,8 +230,13 @@ func TestRequestTokenHandler(t *testing.T) {
 		req := httptest.NewRequest("POST", "/api/auth/request-token", bytes.NewBufferString(payload))
 		w := httptest.NewRecorder()
 		RequestToken(w, req)
-		if w.Code != http.StatusBadRequest {
-			t.Errorf("Expected status 400, got %d", w.Code)
+		if w.Code != http.StatusOK {
+			t.Errorf("Expected status 200, got %d", w.Code)
+		}
+		var res models.AuthResponse
+		json.Unmarshal(w.Body.Bytes(), &res)
+		if res.Username != "Operator" || res.Token != "" {
+			t.Errorf("Expected uniform response with username 'Operator' and empty token, got %+v", res)
 		}
 	})
 
@@ -759,8 +764,8 @@ func TestSQLFailuresCoverage(t *testing.T) {
 		req := httptest.NewRequest("POST", "/api/auth/request-token", bytes.NewBufferString(payload))
 		w := httptest.NewRecorder()
 		RequestToken(w, req)
-		if w.Code != http.StatusBadRequest {
-			t.Errorf("Expected 400, got %d", w.Code)
+		if w.Code != http.StatusInternalServerError {
+			t.Errorf("Expected 500, got %d", w.Code)
 		}
 
 		// 2. Login SQL query OTP failure

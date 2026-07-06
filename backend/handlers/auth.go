@@ -3,6 +3,7 @@ package handlers
 import (
 	"crypto/rand"
 	"crypto/sha256"
+	"database/sql"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
@@ -133,43 +134,52 @@ func RequestToken(w http.ResponseWriter, r *http.Request) {
 	var isAllowed bool
 	if store.UsePostgres {
 		err := store.SQL.QueryRow("SELECT username FROM operators WHERE uid = $1", uid).Scan(&username)
-		isAllowed = (err == nil)
+		if err != nil {
+			if err == sql.ErrNoRows {
+				isAllowed = false
+			} else {
+				log.Printf("[DATABASE ERROR] Failed to query operator: %v", err)
+				writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "Database read error"})
+				return
+			}
+		} else {
+			isAllowed = true
+		}
 	} else {
 		username, isAllowed = allowedUIDs[uid]
 	}
 
-	if !isAllowed {
-		// Mock delay to prevent timing attacks / account enumeration
-		time.Sleep(100 * time.Millisecond)
-		// Return generic error message to prevent account harvesting
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "Invalid login request or account disabled"})
-		return
-	}
+	// Always use a generic username to prevent leaking information
+	displayUsername := "Operator"
 
 	// 3. Generate token
 	token := generateSecureSHA256Token()
 	expiry := time.Now().Add(5 * time.Minute)
 
-	// Save token in memory store or SQL
-	if store.UsePostgres {
-		if err := store.SaveSQLOTP(uid, token, expiry); err != nil {
-			log.Printf("[DATABASE ERROR] Failed to save OTP in Postgres: %v", err)
-			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "Database write error"})
-			return
+	if isAllowed {
+		// Save token in memory store or SQL
+		if store.UsePostgres {
+			if err := store.SaveSQLOTP(uid, token, expiry); err != nil {
+				log.Printf("[DATABASE ERROR] Failed to save OTP in Postgres: %v", err)
+				writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "Database write error"})
+				return
+			}
+		} else {
+			otpStore[uid] = otpData{
+				Token:     token,
+				ExpiresAt: expiry,
+			}
 		}
+		fmt.Printf("\n🔑 [SECURITY AUTH OTP] Copy this SHA-256 token to login for UID %s (%s):\n--> %s\n\n", uid, username, token)
 	} else {
-		otpStore[uid] = otpData{
-			Token:     token,
-			ExpiresAt: expiry,
-		}
+		// Mock delay to prevent timing attacks / account enumeration
+		time.Sleep(50 * time.Millisecond)
 	}
-
-	fmt.Printf("\n🔑 [SECURITY AUTH OTP] Copy this SHA-256 token to login for UID %s (%s):\n--> %s\n\n", uid, username, token)
 
 	// Send back response
 	writeJSON(w, http.StatusOK, models.AuthResponse{
 		UID:      uid,
-		Username: username,
+		Username: displayUsername,
 		Token:    "", // Redacted: OTP is only printed in the server logs, not disclosed in response
 		Expiry:   expiry,
 	})
