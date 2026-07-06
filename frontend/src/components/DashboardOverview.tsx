@@ -83,16 +83,111 @@ export default function DashboardOverview({ summary, recentAlerts, agents, actio
     finally { setSimulating(false); setTimeout(() => setSimMsg(''), 4000); }
   };
 
-  const techniques = [
-    { id: 'T1110', name: 'Brute Force' },
-    { id: 'T1059', name: 'Command & Script' },
-    { id: 'T1078', name: 'Valid Accounts' },
-    { id: 'T1485', name: 'Data Destruction' },
-    { id: 'T1003', name: 'Credential Dump' },
-    { id: 'T1046', name: 'Network Scan' },
-    { id: 'T1168', name: 'Scheduled Task' },
-    { id: 'T1071', name: 'App Layer Proto' },
-  ];
+  const techniqueNames: Record<string, string> = {
+    'T1110': 'Brute Force',
+    'T1059': 'Command & Script',
+    'T1078': 'Valid Accounts',
+    'T1485': 'Data Destruction',
+    'T1003': 'Credential Dump',
+    'T1046': 'Network Scan',
+    'T1168': 'Scheduled Task',
+    'T1071': 'App Layer Proto',
+    'T1190': 'Exploit Pub-Facing App',
+    'T1189': 'Drive-by Compromise',
+    'T1068': 'Exploitation for Priv Esc',
+    'T1565.002': 'Data Invalidation',
+  };
+
+  const techniques = (() => {
+    const list = [
+      { id: 'T1110', name: 'Brute Force' },
+      { id: 'T1059', name: 'Command & Script' },
+      { id: 'T1078', name: 'Valid Accounts' },
+      { id: 'T1485', name: 'Data Destruction' },
+      { id: 'T1003', name: 'Credential Dump' },
+      { id: 'T1046', name: 'Network Scan' },
+      { id: 'T1168', name: 'Scheduled Task' },
+      { id: 'T1071', name: 'App Layer Proto' },
+    ];
+    
+    if (summary?.mitreCoverage) {
+      Object.keys(summary.mitreCoverage).forEach(techId => {
+        if (!list.some(t => t.id === techId)) {
+          list.push({
+            id: techId,
+            name: techniqueNames[techId] || 'Other Technique'
+          });
+        }
+      });
+    }
+    return list;
+  })();
+
+  const chartPoints = (() => {
+    const numBins = 8;
+    const bins = Array(numBins).fill(0);
+    
+    let durationMs = 24 * 60 * 60 * 1000;
+    switch (timeRange) {
+      case '15m': durationMs = 15 * 60 * 1000; break;
+      case '1h': durationMs = 60 * 60 * 1000; break;
+      case '4h': durationMs = 4 * 60 * 60 * 1000; break;
+      case '12h': durationMs = 12 * 60 * 60 * 1000; break;
+    }
+    
+    const now = Date.now();
+    const startTime = now - durationMs;
+    const binSize = durationMs / numBins;
+    
+    filteredAlerts.forEach(a => {
+      const t = new Date(a.timestamp).getTime();
+      const offset = t - startTime;
+      if (offset >= 0 && offset < durationMs) {
+        const binIndex = Math.floor(offset / binSize);
+        if (binIndex >= 0 && binIndex < numBins) {
+          bins[binIndex]++;
+        }
+      }
+    });
+    
+    const maxAlertsInBin = Math.max(...bins, 1);
+    const points = bins.map((count, index) => {
+      const x = 10 + (index * (480 / (numBins - 1)));
+      const y = 145 - (count / maxAlertsInBin) * 110;
+      return { x, y };
+    });
+    
+    return points;
+  })();
+
+  const chartPath = (() => {
+    if (chartPoints.length === 0) return 'M 10 145 L 490 145';
+    let path = `M ${chartPoints[0].x} ${chartPoints[0].y}`;
+    for (let i = 1; i < chartPoints.length; i++) {
+      path += ` L ${chartPoints[i].x} ${chartPoints[i].y}`;
+    }
+    return path;
+  })();
+
+  const chartAreaPath = (() => {
+    if (chartPoints.length === 0) return 'M 10 145 L 490 145 Z';
+    let path = `M ${chartPoints[0].x} ${chartPoints[0].y}`;
+    for (let i = 1; i < chartPoints.length; i++) {
+      path += ` L ${chartPoints[i].x} ${chartPoints[i].y}`;
+    }
+    path += ` L ${chartPoints[chartPoints.length - 1].x} 145 L ${chartPoints[0].x} 145 Z`;
+    return path;
+  })();
+
+  const axisLabels = (() => {
+    switch (timeRange) {
+      case '15m': return ['15m ago', '10m', '5m', 'Now'];
+      case '1h': return ['1h ago', '40m', '20m', 'Now'];
+      case '4h': return ['4h ago', '3h', '2h', '1h', 'Now'];
+      case '12h': return ['12h ago', '8h', '4h', 'Now'];
+      default: return ['24h ago', '16h', '8h', 'Now'];
+    }
+  })();
 
   const Bar = ({ value, max, color }: { value: number; max: number; color: string }) => (
     <div style={{ width: '100%', height: 3, background: 'var(--border-0)', borderRadius: 1 }}>
@@ -236,11 +331,10 @@ export default function DashboardOverview({ summary, recentAlerts, agents, actio
             <TrendingUp size={13} style={{ color: 'var(--accent)' }} /> Agent Abnormality Status
           </h3>
           <div style={{ display: 'flex', flexDirection: 'column', gap: 8, flex: 1, justifyContent: 'center' }}>
-            {[
-              agents.find(a => a.id === 'agent-01') || agents[0],
-              agents.find(a => a.id === 'agent-02') || agents[1],
-              agents.find(a => a.id === 'agent-03') || agents[2]
-            ].filter(Boolean).map((agent, idx) => {
+            {[...agents]
+              .sort((a, b) => b.threatScore - a.threatScore)
+              .slice(0, 3)
+              .map((agent, idx) => {
               const highestSev = getHighestSeverityForAgent(agent.id);
               const totalEvents = filteredAlerts.filter(a => a.agentId === agent.id && ['low', 'medium', 'high', 'critical'].includes(a.severity)).length;
               return (
@@ -353,7 +447,7 @@ export default function DashboardOverview({ summary, recentAlerts, agents, actio
               <h3 style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: '0.85rem' }}>
                 <Activity size={13} style={{ color: 'var(--info)' }} /> Alert Volume
               </h3>
-              <span style={{ fontSize: '0.68rem', color: 'var(--text-3)', fontFamily: "'IBM Plex Mono', monospace" }}>24h</span>
+              <span style={{ fontSize: '0.68rem', color: 'var(--text-3)', fontFamily: "'IBM Plex Mono', monospace" }}>{timeRange}</span>
             </div>
             <div className="svg-chart-container" style={{ position: 'relative' }}>
               <svg width="100%" height="180" viewBox="0 0 500 180" preserveAspectRatio="none">
@@ -366,16 +460,19 @@ export default function DashboardOverview({ summary, recentAlerts, agents, actio
                 <line x1="0" y1="45" x2="500" y2="45" className="chart-grid-line" />
                 <line x1="0" y1="90" x2="500" y2="90" className="chart-grid-line" />
                 <line x1="0" y1="135" x2="500" y2="135" className="chart-grid-line" />
-                {recentAlerts.length > 0 ? (
+                {filteredAlerts.length > 0 ? (
                   <>
-                    <path d={`M 0 155 Q 80 130, 160 145 T 320 80 T 500 ${165 - (summary?.criticalAlerts ? summary.criticalAlerts * 20 : 8)}`} className="chart-line" />
-                    <path d={`M 0 155 Q 80 130, 160 145 T 320 80 T 500 ${165 - (summary?.criticalAlerts ? summary.criticalAlerts * 20 : 8)} L 500 180 L 0 180 Z`} className="chart-area" fill="url(#area-gradient)" />
+                    <path d={chartPath} className="chart-line" />
+                    <path d={chartAreaPath} className="chart-area" fill="url(#area-gradient)" />
+                    {chartPoints.map((p, idx) => (
+                      <circle key={idx} cx={p.x} cy={p.y} r="3.5" fill="var(--accent)" style={{ filter: 'drop-shadow(0 0 2px var(--accent))' }} />
+                    ))}
                   </>
-                ) : <path d="M 0 165 L 500 165" className="chart-line" />}
-                <text x="5" y="175" className="chart-axis-text">24h ago</text>
-                <text x="155" y="175" className="chart-axis-text">16h</text>
-                <text x="310" y="175" className="chart-axis-text">8h</text>
-                <text x="465" y="175" className="chart-axis-text">Now</text>
+                ) : <path d="M 10 145 L 490 145" className="chart-line" />}
+                <text x="10" y="175" className="chart-axis-text">{axisLabels[0]}</text>
+                <text x="160" y="175" className="chart-axis-text" textAnchor="middle">{axisLabels[1]}</text>
+                <text x="310" y="175" className="chart-axis-text" textAnchor="middle">{axisLabels[2]}</text>
+                <text x="490" y="175" className="chart-axis-text" textAnchor="end">{axisLabels[axisLabels.length - 1]}</text>
               </svg>
             </div>
           </div>
