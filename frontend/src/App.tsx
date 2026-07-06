@@ -118,7 +118,7 @@ export default function App() {
           timeRange={timeRange} setTimeRange={setTimeRange} onRefresh={refreshAllData}
           currentUser={user} />;
       case 'soar-metrics':
-        return <SoarPerformanceDashboard actions={actions} />;
+        return <SoarPerformanceDashboard actions={actions} alerts={alerts} />;
       case 'agents':
         return <AgentManager agents={agents} />;
       case 'fim':
@@ -130,7 +130,7 @@ export default function App() {
     }
   };
 
-  const hasCritical = summary && summary.criticalAlerts > 0;
+  const isAlerting = summary && (summary.criticalAlerts > 0 || summary.highAlerts > 0 || summary.threatLevel === 'Severe' || summary.threatLevel === 'Elevated');
   const totalActive = summary ? summary.criticalAlerts + summary.highAlerts : 0;
 
   const navItems = [
@@ -178,7 +178,7 @@ export default function App() {
               {item.badge != null && item.badge > 0 && (
                 <span style={{
                   marginLeft: 'auto',
-                  background: hasCritical ? 'var(--critical)' : 'var(--high)',
+                  background: isAlerting ? 'var(--critical)' : 'var(--high)',
                   color: '#fff',
                   fontSize: '0.6rem',
                   fontWeight: 700,
@@ -201,13 +201,13 @@ export default function App() {
         <div className="sidebar-footer">
           <div style={{
             width: 6, height: 6,
-            background: hasCritical ? 'var(--critical)' : 'var(--low)',
-            animation: hasCritical ? 'pulseGlow 2s infinite' : 'none'
+            background: isAlerting ? 'var(--critical)' : 'var(--low)',
+            animation: isAlerting ? 'pulseGlow 2s infinite' : 'none'
           }} />
           <div className="system-status">
             <span className="system-status-title">SYS STATUS</span>
-            <span className="system-status-value" style={{ color: hasCritical ? 'var(--critical)' : 'var(--low)' }}>
-              {hasCritical ? 'ALERTING' : 'SECURED'}
+            <span className="system-status-value" style={{ color: isAlerting ? 'var(--critical)' : 'var(--low)' }}>
+              {isAlerting ? 'ALERTING' : 'SECURED'}
             </span>
           </div>
         </div>

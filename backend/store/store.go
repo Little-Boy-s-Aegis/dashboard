@@ -8,6 +8,7 @@ import (
 	"log"
 	"math/rand"
 	"net/http"
+	"os"
 	"strings"
 	"sync"
 	"time"
@@ -101,6 +102,12 @@ func (db *Database) AddFIMEvent(fim *models.FIMEvent) {
 func (db *Database) SaveAgent(agent *models.Agent) {
 	if UsePostgres {
 		_ = SaveSQLAgent(agent)
+	}
+}
+
+func (db *Database) SaveAlert(alert *models.Alert) {
+	if UsePostgres {
+		_ = SaveSQLAlert(alert)
 	}
 }
 
@@ -320,19 +327,66 @@ func (db *Database) persistSeed() {
 		loadedAlerts, err := LoadSQLAlerts()
 		if err == nil {
 			db.Alerts = loadedAlerts
-			db.AlertCounter = len(loadedAlerts)
+			maxVal := 0
+			for _, alert := range loadedAlerts {
+				var suffix int
+				if _, err := fmt.Sscanf(alert.ID, "alt-%d", &suffix); err == nil {
+					if suffix > maxVal {
+						maxVal = suffix
+					}
+				}
+				if _, err := fmt.Sscanf(alert.ID, "alt-soar-%d", &suffix); err == nil {
+					if suffix > maxVal {
+						maxVal = suffix
+					}
+				}
+			}
+			db.AlertCounter = maxVal
 		}
 
 		loadedFim, err := LoadSQLFIMEvents()
 		if err == nil {
 			db.FIMEvents = loadedFim
-			db.FimCounter = len(loadedFim)
+			maxVal := 0
+			for _, fim := range loadedFim {
+				var suffix int
+				if _, err := fmt.Sscanf(fim.ID, "fim-%d", &suffix); err == nil {
+					if suffix > maxVal {
+						maxVal = suffix
+					}
+				}
+			}
+			db.FimCounter = maxVal
 		}
 
 		loadedLogs, err := LoadSQLLogEntries()
 		if err == nil {
 			db.Logs = loadedLogs
-			db.LogCounter = len(loadedLogs)
+			maxVal := 0
+			for _, logEntry := range loadedLogs {
+				var suffix int
+				if _, err := fmt.Sscanf(logEntry.ID, "log-%d", &suffix); err == nil {
+					if suffix > maxVal {
+						maxVal = suffix
+					}
+				}
+			}
+			db.LogCounter = maxVal
+		}
+
+		loadedActions, err := LoadSQLActionLogs()
+		if err == nil {
+			db.ActionLogs = loadedActions
+			maxVal := 0
+			for _, act := range loadedActions {
+				var suffix int
+				if _, err := fmt.Sscanf(act.ID, "act-%d", &suffix); err == nil {
+					if suffix > maxVal {
+						maxVal = suffix
+					}
+				}
+			}
+			db.ActionCounter = maxVal
 		}
 		return
 	}
@@ -775,7 +829,11 @@ var lastIngestedBankLogID int64 = 0
 
 func (db *Database) syncBankSecurityLogs() {
 	client := &http.Client{Timeout: 2 * time.Second}
-	req, err := http.NewRequest("GET", "http://localhost:8080/api/admin/security/logs", nil)
+	bankURL := os.Getenv("BANK_BACKEND_URL")
+	if bankURL == "" {
+		bankURL = "http://be-backend:8080"
+	}
+	req, err := http.NewRequest("GET", bankURL+"/api/admin/security/logs", nil)
 	if err != nil {
 		return
 	}
