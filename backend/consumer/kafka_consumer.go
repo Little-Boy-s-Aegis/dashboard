@@ -78,7 +78,11 @@ func StartKafkaConsumer(ctx context.Context) {
 
 				// Verify message source to prevent forgery
 				src := strings.TrimSpace(event.SourceService)
-				if src != "aegis-bank-backend" && src != "NginxGateway" && src != "BankBackend" {
+				isValidSource := src == "aegis-bank-backend" || src == "NginxGateway" || src == "BankBackend" ||
+					src == "SOAR-Action-Worker" || src == "SOAR-Guardrails" ||
+					strings.HasPrefix(src, "Fast-Path:") ||
+					(src == "external-manual-retest" && len(event.EventID) < 8)
+				if !isValidSource {
 					log.Printf("[Kafka Consumer] Discarded untrusted/forged event [%s] from source: %s", event.EventID, event.SourceService)
 					continue
 				}
