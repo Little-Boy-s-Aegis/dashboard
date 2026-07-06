@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"os"
 	"strings"
 	"time"
 
@@ -857,5 +858,136 @@ func PerformAction(w http.ResponseWriter, r *http.Request) {
 	store.DB.ActionLogs = append(store.DB.ActionLogs, actionLog)
 
 	writeJSON(w, http.StatusOK, actionLog)
+}
+
+// POST /api/internal/soar/decision
+func HandleInternalSoarDecision(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "Method not allowed"})
+		return
+	}
+
+	// 1. Verify internal secret key
+	internalToken := os.Getenv("AEGIS_INTERNAL_TOKEN")
+	if internalToken == "" {
+		internalToken = "aegis-secret-security-sync-token-2026"
+	}
+	if r.Header.Get("X-Aegis-Internal-Key") != internalToken {
+		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "Unauthorized: Invalid internal secret key"})
+		return
+	}
+
+	// 2. Decode the v7 decision payload
+	var req struct {
+		SchemaVersion string `json:"schema_version"`
+		Timestamp     string `json:"timestamp"`
+		InputSummary  struct {
+			IncidentID string `json:"incident_id"`
+		} `json:"input_summary"`
+		Scoring struct {
+			FinalRiskScore float64 `json:"final_risk_score_0_10"`
+			Priority       string  `json:"priority"`
+		} `json:"scoring"`
+		Decision struct {
+			FinalDecision string `json:"final_decision"`
+			Justification string `json:"justification"`
+		} `json:"decision"`
+		Actions []struct {
+			ActionID    string `json:"action_id"`
+			ActionType  string `json:"action_type"`
+			Phase       string `json:"phase"`
+			Status      string `json:"status"`
+			Rationale   string `json:"rationale"`
+			Target      struct {
+				Type        string `json:"type"`
+				ValueMasked string `json:"value_masked"`
+			} `json:"target"`
+		} `json:"actions"`
+	}
+
+	err := json.NewDecoder(r.Body).Decode(&req)
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "Invalid JSON payload structure: " + err.Error()})
+		return
+	}
+
+	// 3. Strict schema validation
+	if req.SchemaVersion != "littleboy.soc.layer2.orchestrator_decision.v7" {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "Invalid schema version: expected littleboy.soc.layer2.orchestrator_decision.v7"})
+		return
+	}
+
+	store.DB.Mu.Lock()
+	defer store.DB.Mu.Unlock()
+
+	// 4. Ingest and record executed actions into action_logs
+	var processedActions []string
+	for _, act := range req.Actions {
+		if act.Status == "executed" {
+			store.DB.ActionCounter++
+			actionLogID := fmt.Sprintf("act-soar-%04d", store.DB.ActionCounter)
+
+			// Map action type to SOC friendly name
+			mappedActionType := act.ActionType
+			switch act.ActionType {
+			case "block_ip":
+				mappedActionType = "Block IP"
+			case "quarantine_host":
+				mappedActionType = "Isolate Host"
+			case "force_logout":
+				mappedActionType = "Force Logout"
+			case "disable_account":
+				mappedActionType = "Revoke Credentials"
+			case "preserve_logs":
+				mappedActionType = "Preserve Logs"
+			}
+
+			// Apply simulation side effects
+			detailMsg := act.Rationale
+			if mappedActionType == "Isolate Host" {
+				for _, a := range store.DB.Agents {
+					if a.Name == act.Target.ValueMasked || a.ID == act.Target.ValueMasked {
+						a.Status = "disconnected"
+						detailMsg = fmt.Sprintf("Host %s isolated by SOAR Engine. Local interfaces disabled.", a.Name)
+						break
+					}
+				}
+			}
+
+			actionLog := &models.ActionLog{
+				ID:         actionLogID,
+				Timestamp:  time.Now(),
+				Actor:      "SOAR L2 Orchestrator",
+				ActionType: mappedActionType,
+				Target:     act.Target.ValueMasked,
+				Status:     "success",
+				Message:    detailMsg,
+			}
+
+			// Save to Postgres
+			if store.UsePostgres {
+				_, dbErr := store.SQL.Exec(`
+					INSERT INTO action_logs (id, timestamp, actor, action_type, target, status, message)
+					VALUES ($1, $2, $3, $4, $5, $6, $7)
+				`, actionLogID, actionLog.Timestamp, actionLog.Actor, actionLog.ActionType, actionLog.Target, actionLog.Status, actionLog.Message)
+				if dbErr != nil {
+					log.Printf("[DATABASE ERROR] Failed to save SOAR action log to PostgreSQL: %v", dbErr)
+				}
+			}
+
+			store.DB.ActionLogs = append(store.DB.ActionLogs, actionLog)
+			processedActions = append(processedActions, fmt.Sprintf("%s on %s", mappedActionType, act.Target.ValueMasked))
+		}
+	}
+
+	log.Printf("[API GATEWAY INTERNAL] Ingested and processed L2 Decision from Qwen. IncidentID: %s, Risk: %.1f, Decision: %s, Actions: %v",
+		req.InputSummary.IncidentID, req.Scoring.FinalRiskScore, req.Decision.FinalDecision, processedActions)
+
+	writeJSON(w, http.StatusOK, map[string]interface{}{
+		"status":            "success",
+		"message":           "SOAR L2 Orchestrator Decision ingested and actions processed successfully.",
+		"incident_id":       req.InputSummary.IncidentID,
+		"processed_actions": processedActions,
+	})
 }
 

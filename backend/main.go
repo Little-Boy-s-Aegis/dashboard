@@ -77,6 +77,7 @@ func main() {
 	mux.HandleFunc("/api/fim", handlers.GetFimEvents)
 	mux.HandleFunc("/api/logs", handlers.GetLogs)
 	mux.HandleFunc("/api/simulate", handlers.TriggerSimulation)
+	mux.HandleFunc("/api/internal/soar/decision", handlers.HandleInternalSoarDecision)
 	mux.HandleFunc("/api/actions", func(w http.ResponseWriter, r *http.Request) {
 		if r.Method == http.MethodOptions {
 			w.Header().Set("Access-Control-Allow-Origin", "http://localhost:5173")
