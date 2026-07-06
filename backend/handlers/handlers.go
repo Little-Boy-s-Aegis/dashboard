@@ -315,6 +315,38 @@ func AnalyzeAlert(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, analysis)
 }
 
+// POST /api/alerts/:id/analysis
+func SaveAIAnalysis(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost && r.Method != http.MethodPut {
+		writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "Method not allowed"})
+		return
+	}
+
+	parts := strings.Split(r.URL.Path, "/")
+	if len(parts) < 4 {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "Invalid Alert ID"})
+		return
+	}
+	alertID := parts[3]
+
+	var req models.AIAnalysis
+	err := json.NewDecoder(r.Body).Decode(&req)
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "Invalid request body"})
+		return
+	}
+	req.AlertID = alertID
+
+	store.DB.Mu.Lock()
+	store.DB.AIAnalyses[alertID] = &req
+	store.DB.Mu.Unlock()
+
+	writeJSON(w, http.StatusOK, map[string]interface{}{
+		"message":  "AI analysis saved successfully",
+		"analysis": req,
+	})
+}
+
 // GET /api/fim
 func GetFimEvents(w http.ResponseWriter, r *http.Request) {
 	store.DB.Mu.RLock()
