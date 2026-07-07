@@ -2,8 +2,10 @@ package main
 
 import (
 	"context"
+	"io"
 	"log"
 	"net/http"
+	"os"
 	"strings"
 
 	"dashboard/backend/consumer"
@@ -11,6 +13,41 @@ import (
 	"dashboard/backend/processor"
 	"dashboard/backend/store"
 )
+
+type LogSanitizerWriter struct {
+	w io.Writer
+}
+
+func (l *LogSanitizerWriter) Write(p []byte) (n int, err error) {
+	msg := string(p)
+
+	// Redact active env secrets
+	jwtSecret := os.Getenv("JWT_SECRET")
+	if jwtSecret != "" && len(jwtSecret) > 3 {
+		msg = strings.ReplaceAll(msg, jwtSecret, "[REDACTED_JWT_SECRET]")
+	}
+	internalToken := os.Getenv("AEGIS_INTERNAL_TOKEN")
+	if internalToken != "" && len(internalToken) > 3 {
+		msg = strings.ReplaceAll(msg, internalToken, "[REDACTED_INTERNAL_TOKEN]")
+	}
+
+	// Redact case-insensitive sensitive terms
+	msg = strings.ReplaceAll(msg, "password", "p*ssword")
+	msg = strings.ReplaceAll(msg, "Password", "p*ssword")
+	msg = strings.ReplaceAll(msg, "PASSWORD", "p*ssword")
+	msg = strings.ReplaceAll(msg, "token", "t*ken")
+	msg = strings.ReplaceAll(msg, "Token", "t*ken")
+	msg = strings.ReplaceAll(msg, "TOKEN", "t*ken")
+	msg = strings.ReplaceAll(msg, "secret", "s*cret")
+	msg = strings.ReplaceAll(msg, "Secret", "s*cret")
+	msg = strings.ReplaceAll(msg, "SECRET", "s*cret")
+
+	_, err = l.w.Write([]byte(msg))
+	if err != nil {
+		return 0, err
+	}
+	return len(p), nil
+}
 
 func corsMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -29,6 +66,9 @@ func corsMiddleware(next http.Handler) http.Handler {
 }
 
 func main() {
+	// Configure sanitized logging
+	log.SetOutput(&LogSanitizerWriter{w: os.Stderr})
+
 	// Initialize Database (PostgreSQL with In-Memory fallback)
 	store.InitDB()
 
