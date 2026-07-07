@@ -904,6 +904,16 @@ func HandleInternalSoarDecision(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// 3.1 Validate required fields
+	if dec.InputSummary.IncidentID == "" {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "missing required field: input_summary.incident_id"})
+		return
+	}
+	if dec.Decision.FinalDecision == "" {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "missing required field: decision.final_decision"})
+		return
+	}
+
 	store.DB.Mu.Lock()
 	defer store.DB.Mu.Unlock()
 
