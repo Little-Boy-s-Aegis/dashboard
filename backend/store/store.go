@@ -41,8 +41,17 @@ func init() {
 		AIAnalyses: make(map[string]*models.AIAnalysis),
 		ActionLogs: make([]*models.ActionLog, 0),
 	}
-	DB.seed()
-	go DB.startSimulator()
+	
+	// Seed default agents for inventory tracking
+	DB.dbDefaultAgents()
+
+	if os.Getenv("AEGIS_SIMULATION_ENABLED") == "true" {
+		log.Printf("[SIMULATOR] Simulation mode enabled. Seeding mock history & starting background simulator...")
+		DB.seedHistory()
+		go DB.startSimulator()
+	} else {
+		log.Printf("[SIMULATOR] Simulation mode disabled. Running in 100%% dynamic mode.")
+	}
 }
 
 func populateECSFields(entry *models.LogEntry) {
@@ -111,7 +120,7 @@ func (db *Database) SaveAlert(alert *models.Alert) {
 	}
 }
 
-func (db *Database) seed() {
+func (db *Database) dbDefaultAgents() {
 	db.Mu.Lock()
 	defer db.Mu.Unlock()
 
@@ -128,6 +137,11 @@ func (db *Database) seed() {
 		agentsData[i].LastSeen = time.Now()
 		db.Agents[agentsData[i].ID] = &agentsData[i]
 	}
+}
+
+func (db *Database) seedHistory() {
+	db.Mu.Lock()
+	defer db.Mu.Unlock()
 
 	// Seed historical Alerts (last 24 hours)
 	db.AlertCounter = 0
