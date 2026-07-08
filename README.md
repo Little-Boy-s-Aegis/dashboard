@@ -71,3 +71,12 @@ docker build -t aegis-dashboard-frontend .
 docker run -d -p 3001:3001 --name aegis-soc-frontend-service aegis-dashboard-frontend
 ```
 The frontend container compiles the Vite project into static assets and uses internal Nginx to serve them on port `3001` under the `/soc/` path.
+
+---
+
+## 🔒 SIEM Backend Hardening & Data Features
+
+* **Dynamic Simulation & Seeding Controls**: Implemented dynamic seeding toggles in the Go API backend. Database auto-seeding and the threat activity simulator are now optional and controlled dynamically at runtime via the `AEGIS_SIMULATION_ENABLED` environment variable.
+* **Go Backend Log Sanitization**: Added a custom `LogSanitizerWriter` wrapper around backend logging outputs to intercept and sanitize security-sensitive event logs, preventing internal credential/token disclosure.
+* **Path Traversal & SOC Gateway Validation**: Integrated backend security validation tests ensuring API routing is secured against path traversal escapes and unauthorized SOAR gateway bypass actions.
+
