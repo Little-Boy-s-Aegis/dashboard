@@ -66,7 +66,7 @@ export default function SoarPerformanceDashboard({ actions, alerts }: Props) {
       const res = await fetch('/api/banned-ips');
       if (res.ok) {
         const data = await res.json();
-        setBannedIPs(data);
+        setBannedIPs(data || []);
       }
     } catch (e) {
       console.error('Failed to fetch banned IPs:', e);
@@ -114,8 +114,8 @@ export default function SoarPerformanceDashboard({ actions, alerts }: Props) {
   }
 
   // Filter actions handled by the SOAR engine
-  const soarActions = actions.filter(act => 
-    act.actor.includes('SOAR') || act.actor.includes('AI')
+  const soarActions = (actions || []).filter(act => 
+    act && act.actor && (act.actor.includes('SOAR') || act.actor.includes('AI'))
   );
 
   const slaStats = (() => {
@@ -125,8 +125,8 @@ export default function SoarPerformanceDashboard({ actions, alerts }: Props) {
     let total = 0;
 
     soarActions.forEach(act => {
-      const matchingAlert = alerts.find(a => 
-        a.agentName && act.target.includes(a.agentName)
+      const matchingAlert = (alerts || []).find(a => 
+        a && a.agentName && act.target && act.target.includes(a.agentName)
       );
 
       if (matchingAlert) {
