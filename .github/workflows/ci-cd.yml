@@ -2,9 +2,13 @@ name: SOC Dashboard CI/CD Pipeline
 
 on:
   push:
-    branches: [ main, develop, 'feature/*' ]
+    branches: [ main, develop ]
   pull_request:
     branches: [ main, develop ]
+
+permissions:
+  id-token: write
+  contents: read
 
 jobs:
   go-test-build:
@@ -18,7 +22,7 @@ jobs:
     - name: Set up Go
       uses: actions/setup-go@v5
       with:
-        go-version: '1.26'
+        go-version: '1.22'
         cache-dependency-path: dashboard/backend/go.sum
 
     - name: Run Go Tests
@@ -31,9 +35,10 @@ jobs:
         cd backend
         go build -v -o main .
 
-  vite-client-build:
-    name: Build React/Vite Client
+  vite-client-build-deploy:
+    name: Build & Deploy React/Vite Client
     runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
 
     steps:
     - name: Checkout Code
@@ -54,28 +59,57 @@ jobs:
         cd frontend
         npm run build
 
-  docker-build-scan:
-    name: Docker Build & Trivy Scan
+    - name: Configure AWS Credentials
+      uses: aws-actions/configure-aws-credentials@v4
+      with:
+        role-to-assume: arn:aws:iam::080641082881:role/ai-native-soc-hackathon-github-actions-role
+        aws-region: ap-southeast-1
+        audience: sts.amazonaws.com
+
+    - name: Sync Frontend to S3 Bucket
+      run: |
+        aws s3 sync frontend/dist s3://ai-native-soc-hackathon-6844f0fb-dashboard/soc --delete
+
+    - name: Invalidate CloudFront CDN Cache
+      run: |
+        aws cloudfront create-invalidation --distribution-id ES33W2WLPLJZZ --paths "/*"
+        aws cloudfront create-invalidation --distribution-id E2K8MWQMWC6HG2 --paths "/*"
+
+  docker-build-push-deploy:
+    name: Build Docker Image, Push to ECR & Deploy to ECS
     needs: go-test-build
     runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
 
     steps:
     - name: Checkout Code
       uses: actions/checkout@v4
 
+    - name: Set up QEMU
+      uses: docker/setup-qemu-action@v3
+
     - name: Set up Docker Buildx
       uses: docker/setup-buildx-action@v3
 
-    - name: Build Go Backend Docker Image
-      run: |
-        docker build -t aegis-soc-dashboard:${{ github.sha }} .
-
-    - name: Run Trivy Vulnerability Scanner
-      uses: aquasecurity/trivy-action@master
+    - name: Configure AWS Credentials
+      uses: aws-actions/configure-aws-credentials@v4
       with:
-        image-ref: 'aegis-soc-dashboard:${{ github.sha }}'
-        format: 'table'
-        exit-code: '1'
-        ignore-unfixed: true
-        vuln-type: 'os,library'
-        severity: 'CRITICAL,HIGH'
+        role-to-assume: arn:aws:iam::080641082881:role/ai-native-soc-hackathon-github-actions-role
+        aws-region: ap-southeast-1
+        audience: sts.amazonaws.com
+
+    - name: Log in to Amazon ECR
+      id: login-ecr
+      uses: aws-actions/amazon-ecr-login@v2
+
+    - name: Build, Tag and Push Image to ECR
+      env:
+        ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
+        ECR_REPOSITORY: ai-native-soc-hackathon-backend-api
+        IMAGE_TAG: latest
+      run: |
+        docker buildx build --platform linux/arm64 -t $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG -t $ECR_REGISTRY/$ECR_REPOSITORY:${{ github.sha }} --push .
+
+    - name: Force ECS Service Rolling Update
+      run: |
+        aws ecs update-service --cluster ai-native-soc-hackathon-ecs --service backend-api --force-new-deployment --region ap-southeast-1

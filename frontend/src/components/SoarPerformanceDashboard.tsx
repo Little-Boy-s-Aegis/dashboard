@@ -60,34 +60,28 @@ export default function SoarPerformanceDashboard({ actions, alerts }: Props) {
     let total = 0;
 
     soarActions.forEach(act => {
-      let duration = 0;
-      
       const matchingAlert = alerts.find(a => 
         a.agentName && act.target.includes(a.agentName)
       );
 
       if (matchingAlert) {
-        duration = (new Date(act.timestamp).getTime() - new Date(matchingAlert.timestamp).getTime()) / 1000;
-      }
-
-      if (duration <= 0 || duration > 300) {
-        const charSum = act.id.split('').reduce((sum, char) => sum + char.charCodeAt(0), 0);
-        duration = 5 + (charSum % 20); // 5 to 25 seconds
-      }
-
-      total++;
-      if (duration < 15) {
-        under15++;
-        under30++;
-      } else if (duration <= 30) {
-        under30++;
-      } else {
-        over30++;
+        const duration = (new Date(act.timestamp).getTime() - new Date(matchingAlert.timestamp).getTime()) / 1000;
+        if (duration > 0 && duration <= 300) {
+          total++;
+          if (duration < 15) {
+            under15++;
+            under30++;
+          } else if (duration <= 30) {
+            under30++;
+          } else {
+            over30++;
+          }
+        }
       }
     });
 
     if (total === 0) {
-      return { under15Pct: 83.3, under30Pct: 100.0, over30Pct: 0.0, total: 12 };
+      return { under15Pct: 0.0, under30Pct: 100.0, over30Pct: 0.0, total: 0 };
     }
 
     return {
