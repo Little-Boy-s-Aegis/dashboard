@@ -255,6 +255,41 @@ func runMigrations() {
 		log.Fatalf("Migration failed (indexes): %v", err)
 	}
 
+	// 10. System Settings Table
+	_, err = SQL.Exec(`
+		CREATE TABLE IF NOT EXISTS system_settings (
+			key VARCHAR(100) PRIMARY KEY,
+			value VARCHAR(255) NOT NULL
+		)
+	`)
+	if err != nil {
+		log.Fatalf("Migration failed (system_settings): %v", err)
+	}
+
+	// Seed default autopilot setting
+	_, err = SQL.Exec(`
+		INSERT INTO system_settings (key, value)
+		VALUES ('soc_autopilot_enabled', 'false')
+		ON CONFLICT (key) DO NOTHING
+	`)
+	if err != nil {
+		log.Printf("[DATABASE WARNING] Failed to seed default system settings: %v", err)
+	}
+
+	// 11. Banned IPs Table
+	_, err = SQL.Exec(`
+		CREATE TABLE IF NOT EXISTS banned_ips (
+			ip_address VARCHAR(45) PRIMARY KEY,
+			banned_at TIMESTAMP WITH TIME ZONE NOT NULL,
+			banned_by VARCHAR(100) NOT NULL,
+			status VARCHAR(20) NOT NULL,
+			reason TEXT NOT NULL
+		)
+	`)
+	if err != nil {
+		log.Fatalf("Migration failed (banned_ips): %v", err)
+	}
+
 	log.Printf("[DATABASE] Schema migrations completed successfully.")
 }
 
@@ -541,4 +576,69 @@ func LoadSQLActionLogs() ([]*models.ActionLog, error) {
 		logs = append(logs, &l)
 	}
 	return logs, nil
+}
+
+func SaveSQLBannedIP(ip string, actor string, status string, reason string) {
+	if !UsePostgres {
+		return
+	}
+	_, err := SQL.Exec(`
+		INSERT INTO banned_ips (ip_address, banned_at, banned_by, status, reason)
+		VALUES ($1, $2, $3, $4, $5)
+		ON CONFLICT (ip_address) DO UPDATE
+		SET banned_at = EXCLUDED.banned_at, banned_by = EXCLUDED.banned_by, status = EXCLUDED.status, reason = EXCLUDED.reason
+	`, ip, time.Now(), actor, status, reason)
+	if err != nil {
+		log.Printf("[DATABASE ERROR] Failed to save banned IP: %v", err)
+	}
+}
+
+func GetSQLBannedIPs() ([]*models.BannedIP, error) {
+	if !UsePostgres {
+		return []*models.BannedIP{}, nil
+	}
+	rows, err := SQL.Query("SELECT ip_address, banned_at, banned_by, status, reason FROM banned_ips ORDER BY banned_at DESC")
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var list []*models.BannedIP
+	for rows.Next() {
+		var b models.BannedIP
+		var ts time.Time
+		err := rows.Scan(&b.IPAddress, &ts, &b.BannedBy, &b.Status, &b.Reason)
+		if err != nil {
+			log.Printf("[DATABASE ERROR] Scan banned IP row failed: %v", err)
+			continue
+		}
+		b.BannedAt = ts
+		list = append(list, &b)
+	}
+	return list, nil
+}
+
+func GetSQLSetting(key string) (string, error) {
+	if !UsePostgres {
+		return "false", nil
+	}
+	var val string
+	err := SQL.QueryRow("SELECT value FROM system_settings WHERE key = $1", key).Scan(&val)
+	if err != nil {
+		return "", err
+	}
+	return val, nil
+}
+
+func SaveSQLSetting(key string, val string) error {
+	if !UsePostgres {
+		return nil
+	}
+	_, err := SQL.Exec(`
+		INSERT INTO system_settings (key, value)
+		VALUES ($1, $2)
+		ON CONFLICT (key) DO UPDATE
+		SET value = EXCLUDED.value
+	`, key, val)
+	return err
 }

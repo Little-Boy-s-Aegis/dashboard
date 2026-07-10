@@ -174,6 +174,32 @@ func main() {
 	mux.HandleFunc("/api/simulate", handlers.TriggerSimulation)
 	mux.HandleFunc("/api/soar/metrics", handlers.GetSoarMetrics)
 	mux.HandleFunc("/api/internal/soar/decision", handlers.HandleInternalSoarDecision)
+	mux.HandleFunc("/api/settings", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodOptions {
+			w.Header().Set("Access-Control-Allow-Origin", getAllowedOrigin(r))
+			w.Header().Set("Access-Control-Allow-Credentials", "true")
+			w.Header().Set("Access-Control-Allow-Methods", "POST, GET, OPTIONS")
+			w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization")
+			w.WriteHeader(http.StatusOK)
+			return
+		}
+		if r.Method == http.MethodPost {
+			handlers.SaveSettings(w, r)
+		} else {
+			handlers.GetSettings(w, r)
+		}
+	})
+	mux.HandleFunc("/api/banned-ips", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodOptions {
+			w.Header().Set("Access-Control-Allow-Origin", getAllowedOrigin(r))
+			w.Header().Set("Access-Control-Allow-Credentials", "true")
+			w.Header().Set("Access-Control-Allow-Methods", "GET, OPTIONS")
+			w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization")
+			w.WriteHeader(http.StatusOK)
+			return
+		}
+		handlers.GetBannedIPs(w, r)
+	})
 	mux.HandleFunc("/api/actions", func(w http.ResponseWriter, r *http.Request) {
 		if r.Method == http.MethodOptions {
 			w.Header().Set("Access-Control-Allow-Origin", getAllowedOrigin(r))

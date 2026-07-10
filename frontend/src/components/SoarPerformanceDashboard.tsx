@@ -18,6 +18,8 @@ interface Props {
 export default function SoarPerformanceDashboard({ actions, alerts }: Props) {
   const [metrics, setMetrics] = useState<SoarMetrics | null>(null);
   const [loading, setLoading] = useState(true);
+  const [autopilotEnabled, setAutopilotEnabled] = useState(false);
+  const [bannedIPs, setBannedIPs] = useState<any[]>([]);
 
   const fetchMetrics = async () => {
     try {
@@ -33,9 +35,72 @@ export default function SoarPerformanceDashboard({ actions, alerts }: Props) {
     }
   };
 
+  const fetchSettings = async () => {
+    try {
+      const res = await fetch('/api/settings');
+      if (res.ok) {
+        const data = await res.json();
+        setAutopilotEnabled(data.soc_autopilot_enabled);
+      }
+    } catch (e) {
+      console.error('Failed to fetch settings:', e);
+    }
+  };
+
+  const toggleAutopilot = async () => {
+    const newValue = !autopilotEnabled;
+    setAutopilotEnabled(newValue);
+    try {
+      await fetch('/api/settings', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ soc_autopilot_enabled: newValue })
+      });
+    } catch (e) {
+      console.error('Failed to toggle autopilot:', e);
+    }
+  };
+
+  const fetchBannedIPs = async () => {
+    try {
+      const res = await fetch('/api/banned-ips');
+      if (res.ok) {
+        const data = await res.json();
+        setBannedIPs(data);
+      }
+    } catch (e) {
+      console.error('Failed to fetch banned IPs:', e);
+    }
+  };
+
+  const unblockIP = async (ip: string) => {
+    try {
+      const res = await fetch('/api/actions', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          actor: 'SOC Operator',
+          actionType: 'Unblock IP',
+          target: ip,
+          message: 'Manual unblock requested from SOC Dashboard'
+        })
+      });
+      if (res.ok) {
+        fetchBannedIPs();
+      }
+    } catch (e) {
+      console.error('Failed to unblock IP:', e);
+    }
+  };
+
   useEffect(() => {
     fetchMetrics();
-    const interval = setInterval(fetchMetrics, 5000);
+    fetchSettings();
+    fetchBannedIPs();
+    const interval = setInterval(() => {
+      fetchMetrics();
+      fetchBannedIPs();
+    }, 5000);
     return () => clearInterval(interval);
   }, []);
 
@@ -170,6 +235,59 @@ export default function SoarPerformanceDashboard({ actions, alerts }: Props) {
 
       </div>
 
+      {/* Autopilot Automation Control Toggle */}
+      <div className="glass-panel" style={{ padding: '16px 20px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderLeft: autopilotEnabled ? '4px solid var(--low)' : '4px solid var(--accent)' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+          <div style={{ 
+            padding: 8, 
+            borderRadius: '50%', 
+            background: autopilotEnabled ? 'rgba(76, 175, 80, 0.15)' : 'rgba(255, 152, 0, 0.15)',
+            color: autopilotEnabled ? 'var(--low)' : 'var(--accent)'
+          }}>
+            <Zap size={20} />
+          </div>
+          <div>
+            <h3 style={{ fontSize: '0.88rem', fontWeight: 600, color: 'var(--text-0)', margin: 0 }}>
+              SOC Playbook Automation Control (Autopilot Mode)
+            </h3>
+            <p style={{ fontSize: '0.74rem', color: 'var(--text-3)', margin: '2px 0 0' }}>
+              {autopilotEnabled 
+                ? "ON: AI has Full Control to execute automated playbooks immediately (Block IP, Quarantine Host, Force Logout)." 
+                : "OFF: AI operates in Suggest-Only Mode. Recommended remediation actions require manual approval."}
+            </p>
+          </div>
+        </div>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+          <span style={{ 
+            fontSize: '0.72rem', 
+            fontWeight: 700, 
+            padding: '4px 8px', 
+            borderRadius: 4, 
+            fontFamily: "'IBM Plex Mono', monospace",
+            background: autopilotEnabled ? 'rgba(76, 175, 80, 0.1)' : 'rgba(255, 152, 0, 0.1)',
+            color: autopilotEnabled ? 'var(--low)' : 'var(--accent)'
+          }}>
+            {autopilotEnabled ? "AI AUTOPILOT ON" : "SUGGEST ONLY (DEFAULT)"}
+          </span>
+          <button 
+            className="btn btn-outline"
+            style={{ 
+              height: 32, 
+              padding: '0 16px', 
+              fontSize: '0.78rem',
+              fontWeight: 600,
+              borderColor: autopilotEnabled ? 'var(--low)' : 'var(--border-2)',
+              color: autopilotEnabled ? 'var(--low)' : 'var(--text-1)',
+              borderRadius: 6,
+              cursor: 'pointer'
+            }}
+            onClick={toggleAutopilot}
+          >
+            {autopilotEnabled ? "Switch to Suggest Only" : "Enable Playbook Automation"}
+          </button>
+        </div>
+      </div>
+
       {/* Main Grid: Details and Chart */}
       <div style={{ display: 'grid', gridTemplateColumns: '1.2fr 1fr', gap: 16 }}>
         
@@ -280,6 +398,89 @@ export default function SoarPerformanceDashboard({ actions, alerts }: Props) {
 
         </div>
 
+      </div>
+
+      {/* WAF IP Block & Ban Registry Table */}
+      <div className="glass-panel" style={{ display: 'flex', flexDirection: 'column', marginTop: 8 }}>
+        <div style={{ background: 'var(--bg-surface)', padding: '12px 16px', borderBottom: '1px solid var(--border-1)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+          <span style={{ fontSize: '0.85rem', fontWeight: 600, color: 'var(--text-0)', display: 'flex', alignItems: 'center', gap: 8 }}>
+            <ShieldCheck size={16} style={{ color: 'var(--accent)' }} />
+            PostgreSQL Centralized WAF IP Block & Ban Registry
+          </span>
+          <span style={{ fontSize: '0.7rem', color: 'var(--text-3)', fontFamily: "'IBM Plex Mono', monospace" }}>
+            {bannedIPs.filter(ip => ip.status === 'active').length} Active Bans
+          </span>
+        </div>
+
+        <div style={{ padding: '8px 12px', overflowX: 'auto' }}>
+          <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.76rem', textAlign: 'left' }}>
+            <thead>
+              <tr style={{ borderBottom: '1px solid var(--border-1)', color: 'var(--text-3)', fontFamily: "'IBM Plex Mono', monospace", fontSize: '0.68rem' }}>
+                <th style={{ padding: '8px 12px' }}>IP ADDRESS</th>
+                <th style={{ padding: '8px 12px' }}>BANNED AT</th>
+                <th style={{ padding: '8px 12px' }}>BANNED BY</th>
+                <th style={{ padding: '8px 12px' }}>REASON / RATIONALE</th>
+                <th style={{ padding: '8px 12px' }}>STATUS</th>
+                <th style={{ padding: '8px 12px', textAlign: 'right' }}>ACTION</th>
+              </tr>
+            </thead>
+            <tbody>
+              {bannedIPs.map(b => (
+                <tr key={b.ipAddress} style={{ borderBottom: '1px solid var(--border-0)', color: 'var(--text-1)' }}>
+                  <td style={{ padding: '10px 12px', fontWeight: 600, fontFamily: "'IBM Plex Mono', monospace" }}>{b.ipAddress}</td>
+                  <td style={{ padding: '10px 12px', color: 'var(--text-3)' }}>
+                    {new Date(b.bannedAt).toLocaleString()}
+                  </td>
+                  <td style={{ padding: '10px 12px' }}>
+                    <span className="badge badge-neutral" style={{ fontSize: '0.62rem', padding: '2px 6px' }}>{b.bannedBy}</span>
+                  </td>
+                  <td style={{ padding: '10px 12px', color: 'var(--text-2)', maxWidth: 300, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                    {b.reason}
+                  </td>
+                  <td style={{ padding: '10px 12px' }}>
+                    <span style={{ 
+                      fontSize: '0.65rem', 
+                      fontWeight: 700, 
+                      padding: '2px 6px', 
+                      borderRadius: 4,
+                      background: b.status === 'active' ? 'rgba(244, 67, 54, 0.15)' : 'rgba(76, 175, 80, 0.15)',
+                      color: b.status === 'active' ? 'var(--critical)' : 'var(--low)'
+                    }}>
+                      {b.status.toUpperCase()}
+                    </span>
+                  </td>
+                  <td style={{ padding: '10px 12px', textAlign: 'right' }}>
+                    {b.status === 'active' ? (
+                      <button 
+                        className="btn btn-outline" 
+                        style={{ 
+                          height: 24, 
+                          padding: '0 10px', 
+                          fontSize: '0.68rem',
+                          borderColor: 'var(--low)',
+                          color: 'var(--low)',
+                          cursor: 'pointer'
+                        }}
+                        onClick={() => unblockIP(b.ipAddress)}
+                      >
+                        Unban IP
+                      </button>
+                    ) : (
+                      <span style={{ color: 'var(--text-3)', fontSize: '0.68rem', fontStyle: 'italic' }}>Unlocked</span>
+                    )}
+                  </td>
+                </tr>
+              ))}
+              {bannedIPs.length === 0 && (
+                <tr>
+                  <td colSpan={6} style={{ textAlign: 'center', padding: '30px 0', color: 'var(--text-3)' }}>
+                    No IP bans registered in PostgreSQL.
+                  </td>
+                </tr>
+              )}
+            </tbody>
+          </table>
+        </div>
       </div>
 
     </div>

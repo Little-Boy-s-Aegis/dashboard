@@ -51,6 +51,7 @@ func init() {
 		go DB.startSimulator()
 	} else {
 		log.Printf("[SIMULATOR] Simulation mode disabled. Running in 100%% dynamic mode.")
+		go DB.startSyncLoop()
 	}
 }
 
@@ -419,6 +420,14 @@ func (db *Database) persistSeed() {
 		_ = SaveSQLLogEntry(l)
 	}
 	log.Printf("[DATABASE] Memory seeded entities successfully persisted to PostgreSQL.")
+}
+
+func (db *Database) startSyncLoop() {
+	syncTicker := time.NewTicker(2 * time.Second)
+	log.Printf("[SYNC] Starting background security log synchronization loop...")
+	for range syncTicker.C {
+		db.syncBankSecurityLogs()
+	}
 }
 
 func (db *Database) startSimulator() {
@@ -849,22 +858,26 @@ func (db *Database) syncBankSecurityLogs() {
 	}
 	req, err := http.NewRequest("GET", bankURL+"/api/admin/security/logs", nil)
 	if err != nil {
+		log.Printf("[SYNC ERROR] Failed to create request: %v", err)
 		return
 	}
 	// I-01 fix: use env var instead of hardcoded secret
 	syncToken := os.Getenv("AEGIS_INTERNAL_TOKEN")
 	if syncToken == "" {
+		log.Printf("[SYNC WARNING] AEGIS_INTERNAL_TOKEN is empty, skipping log sync")
 		return
 	}
 	req.Header.Set("X-Aegis-Token", syncToken)
 
 	resp, err := client.Do(req)
 	if err != nil {
+		log.Printf("[SYNC ERROR] Failed to fetch bank logs from %s: %v", bankURL, err)
 		return
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
+		log.Printf("[SYNC ERROR] Bank backend returned status %d", resp.StatusCode)
 		return
 	}
 
@@ -880,6 +893,7 @@ func (db *Database) syncBankSecurityLogs() {
 	}
 
 	if err := json.NewDecoder(resp.Body).Decode(&logs); err != nil {
+		log.Printf("[SYNC ERROR] Failed to decode logs JSON: %v", err)
 		return
 	}
 
@@ -956,6 +970,7 @@ func (db *Database) syncBankSecurityLogs() {
 	}
 
 	if hasNewAlerts {
+		log.Printf("[SYNC] Successfully ingested new bank security logs/alerts into PostgreSQL.")
 		if len(db.Logs) > 500 {
 			db.Logs = db.Logs[len(db.Logs)-500:]
 		}
