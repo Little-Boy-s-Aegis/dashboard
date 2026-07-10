@@ -267,7 +267,7 @@ export default function SoarPerformanceDashboard({ actions, alerts }: Props) {
             background: autopilotEnabled ? 'rgba(76, 175, 80, 0.1)' : 'rgba(255, 152, 0, 0.1)',
             color: autopilotEnabled ? 'var(--low)' : 'var(--accent)'
           }}>
-            {autopilotEnabled ? "AI AUTOPILOT ON" : "SUGGEST ONLY (DEFAULT)"}
+            {autopilotEnabled ? "AI AUTOPILOT ON" : "AI AUTOPILOT OFF (DEFAULT)"}
           </span>
           <button 
             className="btn btn-outline"
@@ -283,7 +283,7 @@ export default function SoarPerformanceDashboard({ actions, alerts }: Props) {
             }}
             onClick={toggleAutopilot}
           >
-            {autopilotEnabled ? "Switch to Suggest Only" : "Enable Playbook Automation"}
+            {autopilotEnabled ? "Switch to Suggest Only (OFF)" : "Enable Playbook Automation (ON)"}
           </button>
         </div>
       </div>
