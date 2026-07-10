@@ -174,6 +174,7 @@ func main() {
 	mux.HandleFunc("/api/simulate", handlers.TriggerSimulation)
 	mux.HandleFunc("/api/soar/metrics", handlers.GetSoarMetrics)
 	mux.HandleFunc("/api/internal/soar/decision", handlers.HandleInternalSoarDecision)
+	mux.HandleFunc("/api/internal/ip-ban/check", handlers.HandleInternalIPBanCheck)
 	mux.HandleFunc("/api/settings", func(w http.ResponseWriter, r *http.Request) {
 		if r.Method == http.MethodOptions {
 			w.Header().Set("Access-Control-Allow-Origin", getAllowedOrigin(r))
@@ -221,7 +222,7 @@ func main() {
 	})
 
 	// Wrap mux with Auth middleware, then CORS middleware
-	handler := corsMiddleware(handlers.AuthMiddleware(mux))
+	handler := corsMiddleware(handlers.IPBanMiddleware(handlers.AuthMiddleware(mux)))
 
 	port := os.Getenv("PORT")
 	if port == "" {
@@ -233,9 +234,7 @@ func main() {
 	log.Println("  Server starting on http://localhost:" + port)
 	log.Println("==================================================")
 
-	if err := http.ListenAndServe(":" + port, handler); err != nil {
+	if err := http.ListenAndServe(":"+port, handler); err != nil {
 		log.Fatalf("Server failed to start: %v", err)
 	}
 }
-
-

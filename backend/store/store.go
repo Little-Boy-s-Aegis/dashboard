@@ -23,6 +23,7 @@ type Database struct {
 	FIMEvents     []*models.FIMEvent
 	Logs          []*models.LogEntry
 	AIAnalyses    map[string]*models.AIAnalysis
+	BannedIPs     map[string]*models.BannedIP
 	ActionLogs    []*models.ActionLog
 	AlertCounter  int
 	FimCounter    int
@@ -39,9 +40,10 @@ func init() {
 		FIMEvents:  make([]*models.FIMEvent, 0),
 		Logs:       make([]*models.LogEntry, 0),
 		AIAnalyses: make(map[string]*models.AIAnalysis),
+		BannedIPs:  make(map[string]*models.BannedIP),
 		ActionLogs: make([]*models.ActionLog, 0),
 	}
-	
+
 	// Seed default agents for inventory tracking
 	DB.dbDefaultAgents()
 
@@ -147,12 +149,12 @@ func (db *Database) seedHistory() {
 	// Seed historical Alerts (last 24 hours)
 	db.AlertCounter = 0
 	mitreTechniques := []struct {
-		tech   string
-		tacs   []string
-		title  string
-		desc   string
-		cat    string
-		sev    string
+		tech  string
+		tacs  []string
+		title string
+		desc  string
+		cat   string
+		sev   string
 	}{
 		{"T1059", []string{"Execution"}, "Suspicious PowerShell Execution", "A PowerShell process executed with flags (-enc) commonly used to bypass security controls.", "malware", "high"},
 		{"T1078", []string{"Defense Evasion", "Persistence"}, "Multiple Failed Administrator Logins", "Multiple failed login attempts detected for account Administrator within a 2-minute window.", "auth", "medium"},
@@ -909,7 +911,7 @@ func (db *Database) syncBankSecurityLogs() {
 			mitreTech := "T1190"
 			mitreTactics := []string{"Initial Access"}
 			severity := "high"
-			if strings.ToUpper(logItem.Status) == "ALLOWED" {
+			if strings.ToUpper(logItem.Status) == "ALLOWED" || strings.Contains(strings.ToLower(logItem.Payload), "admin") || strings.Contains(strings.ToLower(logItem.Description), "admin") {
 				severity = "critical"
 			}
 
@@ -955,14 +957,14 @@ func (db *Database) syncBankSecurityLogs() {
 
 			db.LogCounter++
 			db.AddLog(&models.LogEntry{
-				ID:         fmt.Sprintf("log-%05d", db.LogCounter),
-				Timestamp:  time.Now(),
-				AgentID:    "agent-01",
-				AgentName:  "Web-Prod-01",
-				Facility:   "web",
-				Severity:   severity,
-				Message:    fmt.Sprintf("BANK SECURITY ALARM: %s payload detected on %s from IP %s. Status: %s. Detail: %s", logItem.AttackType, logItem.Endpoint, logItem.ClientIP, logItem.Status, logItem.Description),
-				SourceIP:   logItem.ClientIP,
+				ID:        fmt.Sprintf("log-%05d", db.LogCounter),
+				Timestamp: time.Now(),
+				AgentID:   "agent-01",
+				AgentName: "Web-Prod-01",
+				Facility:  "web",
+				Severity:  severity,
+				Message:   fmt.Sprintf("BANK SECURITY ALARM: %s payload detected on %s from IP %s. Status: %s. Detail: %s", logItem.AttackType, logItem.Endpoint, logItem.ClientIP, logItem.Status, logItem.Description),
+				SourceIP:  logItem.ClientIP,
 			})
 
 			hasNewAlerts = true
