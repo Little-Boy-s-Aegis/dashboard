@@ -299,6 +299,8 @@ func runMigrations() {
 		log.Printf("[DATABASE WARNING] Banned IP schema hardening skipped: %v", err)
 	}
 
+	_, _ = SQL.Exec("DELETE FROM banned_ips WHERE status = 'unbanned'")
+
 	log.Printf("[DATABASE] Schema migrations completed successfully.")
 }
 
@@ -648,7 +650,7 @@ func GetSQLBannedIPs() ([]*models.BannedIP, error) {
 	if !UsePostgres {
 		return []*models.BannedIP{}, nil
 	}
-	rows, err := SQL.Query("SELECT ip_address, banned_at, banned_by, status, reason FROM banned_ips ORDER BY banned_at DESC")
+	rows, err := SQL.Query("SELECT ip_address, banned_at, banned_by, status, reason FROM banned_ips WHERE status = 'active' ORDER BY banned_at DESC")
 	if err != nil {
 		return nil, err
 	}

@@ -20,6 +20,7 @@ export default function SoarPerformanceDashboard({ actions, alerts }: Props) {
   const [loading, setLoading] = useState(true);
   const [autopilotEnabled, setAutopilotEnabled] = useState(false);
   const [bannedIPs, setBannedIPs] = useState<any[]>([]);
+  const [searchIP, setSearchIP] = useState('');
 
   const fetchMetrics = async () => {
     try {
@@ -412,6 +413,27 @@ export default function SoarPerformanceDashboard({ actions, alerts }: Props) {
           </span>
         </div>
 
+        {/* Search Bar */}
+        <div style={{ padding: '10px 16px', borderBottom: '1px solid var(--border-1)', display: 'flex', gap: 8, alignItems: 'center' }}>
+          <input 
+            type="text" 
+            placeholder="Search Banned IPs by Address or Reason..." 
+            value={searchIP} 
+            onChange={(e) => setSearchIP(e.target.value)} 
+            style={{ 
+              background: 'rgba(0,0,0,0.2)', 
+              border: '1px solid var(--border-1)', 
+              borderRadius: 4, 
+              color: 'var(--text-0)', 
+              fontSize: '0.74rem', 
+              padding: '6px 10px', 
+              width: '100%',
+              maxWidth: 300,
+              outline: 'none'
+            }} 
+          />
+        </div>
+
         <div style={{ padding: '8px 12px', overflowX: 'auto' }}>
           <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.76rem', textAlign: 'left' }}>
             <thead>
@@ -425,7 +447,7 @@ export default function SoarPerformanceDashboard({ actions, alerts }: Props) {
               </tr>
             </thead>
             <tbody>
-              {bannedIPs.map(b => (
+              {bannedIPs.filter(b => b.status === 'active' && (b.ipAddress.includes(searchIP) || b.reason.toLowerCase().includes(searchIP.toLowerCase()))).map(b => (
                 <tr key={b.ipAddress} style={{ borderBottom: '1px solid var(--border-0)', color: 'var(--text-1)' }}>
                   <td style={{ padding: '10px 12px', fontWeight: 600, fontFamily: "'IBM Plex Mono', monospace" }}>{b.ipAddress}</td>
                   <td style={{ padding: '10px 12px', color: 'var(--text-3)' }}>
@@ -443,38 +465,34 @@ export default function SoarPerformanceDashboard({ actions, alerts }: Props) {
                       fontWeight: 700, 
                       padding: '2px 6px', 
                       borderRadius: 4,
-                      background: b.status === 'active' ? 'rgba(244, 67, 54, 0.15)' : 'rgba(76, 175, 80, 0.15)',
-                      color: b.status === 'active' ? 'var(--critical)' : 'var(--low)'
+                      background: 'rgba(244, 67, 54, 0.15)',
+                      color: 'var(--critical)'
                     }}>
-                      {b.status.toUpperCase()}
+                      ACTIVE
                     </span>
                   </td>
                   <td style={{ padding: '10px 12px', textAlign: 'right' }}>
-                    {b.status === 'active' ? (
-                      <button 
-                        className="btn btn-outline" 
-                        style={{ 
-                          height: 24, 
-                          padding: '0 10px', 
-                          fontSize: '0.68rem',
-                          borderColor: 'var(--low)',
-                          color: 'var(--low)',
-                          cursor: 'pointer'
-                        }}
-                        onClick={() => unblockIP(b.ipAddress)}
-                      >
-                        Unban IP
-                      </button>
-                    ) : (
-                      <span style={{ color: 'var(--text-3)', fontSize: '0.68rem', fontStyle: 'italic' }}>Unlocked</span>
-                    )}
+                    <button 
+                      className="btn btn-outline" 
+                      style={{ 
+                        height: 24, 
+                        padding: '0 10px', 
+                        fontSize: '0.68rem',
+                        borderColor: 'var(--low)',
+                        color: 'var(--low)',
+                        cursor: 'pointer'
+                      }}
+                      onClick={() => unblockIP(b.ipAddress)}
+                    >
+                      Unban IP
+                    </button>
                   </td>
                 </tr>
               ))}
-              {bannedIPs.length === 0 && (
+              {bannedIPs.filter(b => b.status === 'active' && (b.ipAddress.includes(searchIP) || b.reason.toLowerCase().includes(searchIP.toLowerCase()))).length === 0 && (
                 <tr>
                   <td colSpan={6} style={{ textAlign: 'center', padding: '30px 0', color: 'var(--text-3)' }}>
-                    No IP bans registered in PostgreSQL.
+                    No active WAF IP blocks matching filter.
                   </td>
                 </tr>
               )}

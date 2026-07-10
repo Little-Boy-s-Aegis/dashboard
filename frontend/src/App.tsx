@@ -104,6 +104,20 @@ export default function App() {
     }
   }, [isAuthenticated]);
 
+  // Fast ban check interval (1s) to immediately trigger the ban screen if client IP is blocked
+  useEffect(() => {
+    if (isAuthenticated === true) {
+      const banCheckInterval = setInterval(async () => {
+        try {
+          await fetch('/api/auth/check');
+        } catch (e) {
+          // Ignore network errors during fast checking
+        }
+      }, 1000);
+      return () => clearInterval(banCheckInterval);
+    }
+  }, [isAuthenticated]);
+
   const handleLogout = async () => {
     try {
       await fetch('/api/auth/logout', { method: 'POST' });
