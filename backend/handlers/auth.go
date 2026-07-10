@@ -363,11 +363,13 @@ func Login(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// 3. SUCCESSFUL LOGIN -> Consume token immediately (one-time use)
+	// 3. SUCCESSFUL LOGIN -> Consume and delete all tokens immediately
 	if store.UsePostgres {
-		store.DeleteSQLOTP(uid)
+		store.DeleteAllSQLOTPs()
 	} else {
-		delete(otpStore, uid)
+		for k := range otpStore {
+			delete(otpStore, k)
+		}
 	}
 	delete(lockoutStore, lockKey) // reset lockout counter
 	_ = os.Remove("otp.txt")       // Delete OTP retrieval file after successful consumption

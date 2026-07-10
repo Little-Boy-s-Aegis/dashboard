@@ -378,6 +378,14 @@ func DeleteSQLOTP(uid string) error {
 	return err
 }
 
+func DeleteAllSQLOTPs() error {
+	if !UsePostgres {
+		return nil
+	}
+	_, err := SQL.Exec("DELETE FROM otps")
+	return err
+}
+
 // SQL Session Store Helpers
 func SaveSQLSession(sessionToken string, uid string, username string, ipAddress string, expiresAt time.Time) error {
 	_, err := SQL.Exec(`
