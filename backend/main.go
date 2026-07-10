@@ -2,9 +2,11 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"io"
 	"log"
 	"net/http"
+	"net/url"
 	"os"
 	"strings"
 
@@ -49,9 +51,62 @@ func (l *LogSanitizerWriter) Write(p []byte) (n int, err error) {
 	return len(p), nil
 }
 
+func isAllowedOrigin(origin string) bool {
+	if origin == "" {
+		return true
+	}
+	u, err := url.Parse(origin)
+	if err != nil {
+		return false
+	}
+	hostname := u.Hostname()
+	if hostname == "localhost" || hostname == "127.0.0.1" {
+		return true
+	}
+	if hostname == "d1y2tczt9tmz2d.cloudfront.net" {
+		return true
+	}
+	if hostname == "littleboys.biz" || hostname == "www.littleboys.biz" || hostname == "soc.littleboys.biz" {
+		return true
+	}
+	if strings.HasSuffix(hostname, ".littleboys.biz") {
+		return true
+	}
+	fe := os.Getenv("FRONTEND_URL")
+	if fe != "" {
+		if feU, err := url.Parse(fe); err == nil {
+			if hostname == feU.Hostname() {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func getAllowedOrigin(r *http.Request) string {
+	origin := r.Header.Get("Origin")
+	if origin != "" && isAllowedOrigin(origin) {
+		return origin
+	}
+	referer := r.Header.Get("Referer")
+	if referer != "" {
+		if u, err := url.Parse(referer); err == nil {
+			refOrigin := fmt.Sprintf("%s://%s", u.Scheme, u.Host)
+			if isAllowedOrigin(refOrigin) {
+				return refOrigin
+			}
+		}
+	}
+	defaultOrigin := os.Getenv("FRONTEND_URL")
+	if defaultOrigin == "" {
+		return "http://localhost:5173"
+	}
+	return defaultOrigin
+}
+
 func corsMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Access-Control-Allow-Origin", "http://localhost:5173")
+		w.Header().Set("Access-Control-Allow-Origin", getAllowedOrigin(r))
 		w.Header().Set("Access-Control-Allow-Credentials", "true")
 		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
 		w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization")
@@ -93,7 +148,7 @@ func main() {
 	mux.HandleFunc("/api/alerts", handlers.GetAlerts)
 	mux.HandleFunc("/api/alerts/", func(w http.ResponseWriter, r *http.Request) {
 		if r.Method == http.MethodOptions {
-			w.Header().Set("Access-Control-Allow-Origin", "http://localhost:5173")
+			w.Header().Set("Access-Control-Allow-Origin", getAllowedOrigin(r))
 			w.Header().Set("Access-Control-Allow-Credentials", "true")
 			w.Header().Set("Access-Control-Allow-Methods", "POST, GET, PUT, OPTIONS")
 			w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization")
@@ -121,7 +176,7 @@ func main() {
 	mux.HandleFunc("/api/internal/soar/decision", handlers.HandleInternalSoarDecision)
 	mux.HandleFunc("/api/actions", func(w http.ResponseWriter, r *http.Request) {
 		if r.Method == http.MethodOptions {
-			w.Header().Set("Access-Control-Allow-Origin", "http://localhost:5173")
+			w.Header().Set("Access-Control-Allow-Origin", getAllowedOrigin(r))
 			w.Header().Set("Access-Control-Allow-Credentials", "true")
 			w.Header().Set("Access-Control-Allow-Methods", "POST, GET, OPTIONS")
 			w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization")
@@ -134,16 +189,25 @@ func main() {
 			handlers.GetActions(w, r)
 		}
 	})
+	mux.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		w.Write([]byte("OK"))
+	})
 
 	// Wrap mux with Auth middleware, then CORS middleware
 	handler := corsMiddleware(handlers.AuthMiddleware(mux))
 
+	port := os.Getenv("PORT")
+	if port == "" {
+		port = "8082"
+	}
+
 	log.Println("==================================================")
 	log.Println("  Aegis Security Operations Center (SOC) API")
-	log.Println("  Server starting on http://localhost:8082")
+	log.Println("  Server starting on http://localhost:" + port)
 	log.Println("==================================================")
 
-	if err := http.ListenAndServe(":8082", handler); err != nil {
+	if err := http.ListenAndServe(":" + port, handler); err != nil {
 		log.Fatalf("Server failed to start: %v", err)
 	}
 }

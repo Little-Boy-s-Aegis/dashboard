@@ -51,6 +51,59 @@ var (
 	authMu       sync.RWMutex
 )
 
+func isAllowedOrigin(origin string) bool {
+	if origin == "" {
+		return true
+	}
+	u, err := url.Parse(origin)
+	if err != nil {
+		return false
+	}
+	hostname := u.Hostname()
+	if hostname == "localhost" || hostname == "127.0.0.1" {
+		return true
+	}
+	if hostname == "d1y2tczt9tmz2d.cloudfront.net" {
+		return true
+	}
+	if hostname == "littleboys.biz" || hostname == "www.littleboys.biz" || hostname == "soc.littleboys.biz" {
+		return true
+	}
+	if strings.HasSuffix(hostname, ".littleboys.biz") {
+		return true
+	}
+	fe := os.Getenv("FRONTEND_URL")
+	if fe != "" {
+		if feU, err := url.Parse(fe); err == nil {
+			if hostname == feU.Hostname() {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func getAllowedOrigin(r *http.Request) string {
+	origin := r.Header.Get("Origin")
+	if origin != "" && isAllowedOrigin(origin) {
+		return origin
+	}
+	referer := r.Header.Get("Referer")
+	if referer != "" {
+		if u, err := url.Parse(referer); err == nil {
+			refOrigin := fmt.Sprintf("%s://%s", u.Scheme, u.Host)
+			if isAllowedOrigin(refOrigin) {
+				return refOrigin
+			}
+		}
+	}
+	defaultOrigin := os.Getenv("FRONTEND_URL")
+	if defaultOrigin == "" {
+		return "http://localhost:5173"
+	}
+	return defaultOrigin
+}
+
 // Helper: Generate secure 100% random SHA-256 token
 func generateSecureSHA256Token() string {
 	b := make([]byte, 32)
@@ -104,7 +157,7 @@ func isBruteForceVulnerable() bool {
 // POST /api/auth/request-token
 func RequestToken(w http.ResponseWriter, r *http.Request) {
 	// Enable CORS headers for preflight and standard requests
-	w.Header().Set("Access-Control-Allow-Origin", "http://localhost:5173")
+	w.Header().Set("Access-Control-Allow-Origin", getAllowedOrigin(r))
 	w.Header().Set("Access-Control-Allow-Credentials", "true")
 	w.Header().Set("Access-Control-Allow-Methods", "POST, OPTIONS")
 	w.Header().Set("Access-Control-Allow-Headers", "Content-Type")
@@ -202,6 +255,7 @@ func RequestToken(w http.ResponseWriter, r *http.Request) {
 		// Write to a local file for operator retrieval without exposing secrets in Docker stdout/stderr logs
 		otpMsg := fmt.Sprintf("[SECURITY AUTH OTP] Copy this SHA-256 token to login for UID %s (%s):\n--> %s\n", uid, username, token)
 		_ = os.WriteFile("otp.txt", []byte(otpMsg), 0600)
+		log.Printf("[SECURITY AUTH OTP] Copy this SHA-256 token to login for UID %s (%s): %s", uid, username, token)
 		log.Printf("[SECURITY AUTH] One-time password generated for authentication request.")
 
 		if isVulnerable {
@@ -233,7 +287,7 @@ func RequestToken(w http.ResponseWriter, r *http.Request) {
 
 // POST /api/auth/login
 func Login(w http.ResponseWriter, r *http.Request) {
-	w.Header().Set("Access-Control-Allow-Origin", "http://localhost:5173")
+	w.Header().Set("Access-Control-Allow-Origin", getAllowedOrigin(r))
 	w.Header().Set("Access-Control-Allow-Credentials", "true")
 	w.Header().Set("Access-Control-Allow-Methods", "POST, OPTIONS")
 	w.Header().Set("Access-Control-Allow-Headers", "Content-Type")
@@ -269,7 +323,7 @@ func Login(w http.ResponseWriter, r *http.Request) {
 	// 1. Lockout check
 	lockKey := uid + "@" + ip
 	if data, exists := lockoutStore[lockKey]; exists && time.Now().Before(data.BlockedUntil) {
-		w.Header().Set("Access-Control-Allow-Origin", "http://localhost:5173")
+		w.Header().Set("Access-Control-Allow-Origin", getAllowedOrigin(r))
 		w.Header().Set("Access-Control-Allow-Credentials", "true")
 		writeJSON(w, http.StatusForbidden, map[string]string{
 			"error": "Account is temporarily locked due to too many failed attempts. Locked until " + data.BlockedUntil.Format("15:04:05"),
@@ -376,7 +430,7 @@ func Login(w http.ResponseWriter, r *http.Request) {
 
 // POST /api/auth/logout
 func Logout(w http.ResponseWriter, r *http.Request) {
-	w.Header().Set("Access-Control-Allow-Origin", "http://localhost:5173")
+	w.Header().Set("Access-Control-Allow-Origin", getAllowedOrigin(r))
 	w.Header().Set("Access-Control-Allow-Credentials", "true")
 	w.Header().Set("Access-Control-Allow-Methods", "POST, OPTIONS")
 	w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization")
@@ -426,7 +480,7 @@ func Logout(w http.ResponseWriter, r *http.Request) {
 
 // GET /api/auth/check
 func CheckAuth(w http.ResponseWriter, r *http.Request) {
-	w.Header().Set("Access-Control-Allow-Origin", "http://localhost:5173")
+	w.Header().Set("Access-Control-Allow-Origin", getAllowedOrigin(r))
 	w.Header().Set("Access-Control-Allow-Credentials", "true")
 	w.Header().Set("Access-Control-Allow-Methods", "GET, OPTIONS")
 	w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization")
@@ -477,7 +531,7 @@ func CheckAuth(w http.ResponseWriter, r *http.Request) {
 
 	// 1. IP Binding Validation (Anti-Session Hijacking)
 	ip := getIP(r)
-	if sessionExists && sessionIP != ip {
+	if sessionExists && sessionIP != ip && !isPrivateIP(ip) {
 		log.Printf("[SECURITY ALERT] Session IP mismatch detected on CheckAuth! Revoking session. Session IP: %s, Request IP: %s", sessionIP, ip)
 		authMu.Lock()
 		if store.UsePostgres {
@@ -522,8 +576,8 @@ func AuthMiddleware(next http.Handler) http.Handler {
 		w.Header().Set("Referrer-Policy", "strict-origin-when-cross-origin")
 		w.Header().Set("Content-Security-Policy", "default-src 'none'; frame-ancestors 'none';")
 
-		// Bypass auth for login endpoints
-		if r.URL.Path == "/api/auth/request-token" || r.URL.Path == "/api/auth/login" || r.URL.Path == "/api/auth/check" || r.URL.Path == "/api/auth/logout" {
+		// Bypass auth for health check and login endpoints
+		if r.URL.Path == "/health" || r.URL.Path == "/api/auth/request-token" || r.URL.Path == "/api/auth/login" || r.URL.Path == "/api/auth/check" || r.URL.Path == "/api/auth/logout" {
 			next.ServeHTTP(w, r)
 			return
 		}
@@ -540,18 +594,43 @@ func AuthMiddleware(next http.Handler) http.Handler {
 			origin := r.Header.Get("Origin")
 			referer := r.Header.Get("Referer")
 			
-			isValidOrigin := origin == "http://localhost:5173"
+			allowedOrigin := getAllowedOrigin(r)
+			isValidOrigin := origin == allowedOrigin
+			if !isValidOrigin {
+				allowedHosts := map[string]bool{
+					"littleboys.biz":          true,
+					"www.littleboys.biz":      true,
+					"soc.littleboys.biz":       true,
+					"d1y2tczt9tmz2d.cloudfront.net": true,
+				}
+				if origin != "" {
+					if parsed, err := url.Parse(origin); err == nil {
+						if allowedHosts[parsed.Hostname()] || strings.HasSuffix(parsed.Hostname(), ".littleboys.biz") {
+							isValidOrigin = true
+						}
+					}
+				}
+				if !isValidOrigin && referer != "" {
+					if parsed, err := url.Parse(referer); err == nil {
+						if allowedHosts[parsed.Hostname()] || strings.HasSuffix(parsed.Hostname(), ".littleboys.biz") {
+							isValidOrigin = true
+						}
+					}
+				}
+			}
 			if !isValidOrigin && referer != "" {
 				if parsedUrl, err := url.Parse(referer); err == nil {
-					if parsedUrl.Host == "localhost:5173" {
-						isValidOrigin = true
+					if u, err2 := url.Parse(allowedOrigin); err2 == nil {
+						if parsedUrl.Host == u.Host {
+							isValidOrigin = true
+						}
 					}
 				}
 			}
 
 			if !isValidOrigin {
 				log.Printf("[SECURITY ALERT] CSRF or forbidden origin request blocked! Origin: %s, Referer: %s", origin, referer)
-				w.Header().Set("Access-Control-Allow-Origin", "http://localhost:5173")
+				w.Header().Set("Access-Control-Allow-Origin", getAllowedOrigin(r))
 				w.Header().Set("Access-Control-Allow-Credentials", "true")
 				writeJSON(w, http.StatusForbidden, map[string]string{"error": "Forbidden: Request origin is invalid"})
 				return
@@ -560,7 +639,7 @@ func AuthMiddleware(next http.Handler) http.Handler {
 
 		// Handle preflight requests
 		if r.Method == "OPTIONS" {
-			w.Header().Set("Access-Control-Allow-Origin", "http://localhost:5173")
+			w.Header().Set("Access-Control-Allow-Origin", getAllowedOrigin(r))
 			w.Header().Set("Access-Control-Allow-Credentials", "true")
 			w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
 			w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization")
@@ -601,9 +680,9 @@ func AuthMiddleware(next http.Handler) http.Handler {
 			authMu.RUnlock()
 		}
 
-		// 2. IP Binding Validation (Anti-Hijacking)
+		// 2. IP Binding Validation (Anti-Hijacking) - Bypassed for private/VPC network interface compatibility (ALB/CloudFront)
 		ip := getIP(r)
-		if sessionExists && sessionIP != ip {
+		if sessionExists && sessionIP != ip && !isPrivateIP(ip) {
 			log.Printf("[SECURITY ALERT] Session hijacking detected! Session IP: %s, Request IP: %s. Revoking session.", sessionIP, ip)
 			authMu.Lock()
 			if store.UsePostgres {
@@ -625,7 +704,7 @@ func AuthMiddleware(next http.Handler) http.Handler {
 				}
 				authMu.Unlock()
 			}
-			w.Header().Set("Access-Control-Allow-Origin", "http://localhost:5173")
+			w.Header().Set("Access-Control-Allow-Origin", getAllowedOrigin(r))
 			w.Header().Set("Access-Control-Allow-Credentials", "true")
 			writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "Unauthorized: Session invalid or expired"})
 			return
@@ -633,4 +712,22 @@ func AuthMiddleware(next http.Handler) http.Handler {
 
 		next.ServeHTTP(w, r)
 	})
+}
+
+// Helper: check if IP belongs to private network ranges
+func isPrivateIP(ipStr string) bool {
+	ip := net.ParseIP(ipStr)
+	if ip == nil {
+		return false
+	}
+	if ip.IsLoopback() {
+		return true
+	}
+	ipv4 := ip.To4()
+	if ipv4 != nil {
+		return ipv4[0] == 10 ||
+			(ipv4[0] == 172 && ipv4[1] >= 16 && ipv4[1] <= 31) ||
+			(ipv4[0] == 192 && ipv4[1] == 168)
+	}
+	return false
 }

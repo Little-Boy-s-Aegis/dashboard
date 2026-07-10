@@ -1061,9 +1061,6 @@ func GetSoarMetrics(w http.ResponseWriter, r *http.Request) {
 	uniquePlaybooks := make(map[string]bool)
 	var responseTimes []float64
 
-	// Seed some historical response times as baseline
-	responseTimes = append(responseTimes, 12.4, 8.5, 14.2, 9.8, 11.5)
-
 	for _, a := range store.DB.Alerts {
 		if strings.HasPrefix(a.RuleID, "rule-") {
 			var incidentID string
@@ -1088,29 +1085,26 @@ func GetSoarMetrics(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// Baseline of 3 playbooks initially, plus the unique ones from alerts
-	totalPlaybooks := 3 + len(uniquePlaybooks)
+	totalPlaybooks := len(uniquePlaybooks)
 
-	// Historical baseline success/failed action counts (to keep rates realistic)
-	successCount := 22
-	failedCount := 1
+	successCount := 0
+	failedCount := 0
 	for _, act := range store.DB.ActionLogs {
-		if act.ID != "act-0001" {
-			if act.Status == "success" {
-				successCount++
-			} else if act.Status == "failed" {
-				failedCount++
-			}
+		if act.Status == "success" {
+			successCount++
+		} else if act.Status == "failed" {
+			failedCount++
 		}
 	}
 
-	successRate := 100.0
+	successRate := 0.0
 	if (successCount + failedCount) > 0 {
 		successRate = (float64(successCount) / float64(successCount+failedCount)) * 100.0
+	} else {
+		successRate = 100.0 // Default to 100% if no actions have run
 	}
 
-	// Average response time calculation
-	avgResponseTime := 11.28
+	avgResponseTime := 0.0
 	if len(responseTimes) > 0 {
 		totalTime := 0.0
 		for _, t := range responseTimes {
