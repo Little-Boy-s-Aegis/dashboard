@@ -23,6 +23,7 @@ type Database struct {
 	FIMEvents     []*models.FIMEvent
 	Logs          []*models.LogEntry
 	AIAnalyses    map[string]*models.AIAnalysis
+	BannedIPs     map[string]*models.BannedIP
 	ActionLogs    []*models.ActionLog
 	AlertCounter  int
 	FimCounter    int
@@ -39,9 +40,10 @@ func init() {
 		FIMEvents:  make([]*models.FIMEvent, 0),
 		Logs:       make([]*models.LogEntry, 0),
 		AIAnalyses: make(map[string]*models.AIAnalysis),
+		BannedIPs:  make(map[string]*models.BannedIP),
 		ActionLogs: make([]*models.ActionLog, 0),
 	}
-	
+
 	// Seed default agents for inventory tracking
 	DB.dbDefaultAgents()
 
@@ -51,6 +53,7 @@ func init() {
 		go DB.startSimulator()
 	} else {
 		log.Printf("[SIMULATOR] Simulation mode disabled. Running in 100%% dynamic mode.")
+		go DB.startSyncLoop()
 	}
 }
 
@@ -146,12 +149,12 @@ func (db *Database) seedHistory() {
 	// Seed historical Alerts (last 24 hours)
 	db.AlertCounter = 0
 	mitreTechniques := []struct {
-		tech   string
-		tacs   []string
-		title  string
-		desc   string
-		cat    string
-		sev    string
+		tech  string
+		tacs  []string
+		title string
+		desc  string
+		cat   string
+		sev   string
 	}{
 		{"T1059", []string{"Execution"}, "Suspicious PowerShell Execution", "A PowerShell process executed with flags (-enc) commonly used to bypass security controls.", "malware", "high"},
 		{"T1078", []string{"Defense Evasion", "Persistence"}, "Multiple Failed Administrator Logins", "Multiple failed login attempts detected for account Administrator within a 2-minute window.", "auth", "medium"},
@@ -419,6 +422,14 @@ func (db *Database) persistSeed() {
 		_ = SaveSQLLogEntry(l)
 	}
 	log.Printf("[DATABASE] Memory seeded entities successfully persisted to PostgreSQL.")
+}
+
+func (db *Database) startSyncLoop() {
+	syncTicker := time.NewTicker(2 * time.Second)
+	log.Printf("[SYNC] Starting background security log synchronization loop...")
+	for range syncTicker.C {
+		db.syncBankSecurityLogs()
+	}
 }
 
 func (db *Database) startSimulator() {
@@ -849,22 +860,26 @@ func (db *Database) syncBankSecurityLogs() {
 	}
 	req, err := http.NewRequest("GET", bankURL+"/api/admin/security/logs", nil)
 	if err != nil {
+		log.Printf("[SYNC ERROR] Failed to create request: %v", err)
 		return
 	}
 	// I-01 fix: use env var instead of hardcoded secret
 	syncToken := os.Getenv("AEGIS_INTERNAL_TOKEN")
 	if syncToken == "" {
+		log.Printf("[SYNC WARNING] AEGIS_INTERNAL_TOKEN is empty, skipping log sync")
 		return
 	}
 	req.Header.Set("X-Aegis-Token", syncToken)
 
 	resp, err := client.Do(req)
 	if err != nil {
+		log.Printf("[SYNC ERROR] Failed to fetch bank logs from %s: %v", bankURL, err)
 		return
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
+		log.Printf("[SYNC ERROR] Bank backend returned status %d", resp.StatusCode)
 		return
 	}
 
@@ -880,6 +895,7 @@ func (db *Database) syncBankSecurityLogs() {
 	}
 
 	if err := json.NewDecoder(resp.Body).Decode(&logs); err != nil {
+		log.Printf("[SYNC ERROR] Failed to decode logs JSON: %v", err)
 		return
 	}
 
@@ -895,7 +911,7 @@ func (db *Database) syncBankSecurityLogs() {
 			mitreTech := "T1190"
 			mitreTactics := []string{"Initial Access"}
 			severity := "high"
-			if strings.ToUpper(logItem.Status) == "ALLOWED" {
+			if strings.ToUpper(logItem.Status) == "ALLOWED" || strings.Contains(strings.ToLower(logItem.Payload), "admin") || strings.Contains(strings.ToLower(logItem.Description), "admin") {
 				severity = "critical"
 			}
 
@@ -941,14 +957,14 @@ func (db *Database) syncBankSecurityLogs() {
 
 			db.LogCounter++
 			db.AddLog(&models.LogEntry{
-				ID:         fmt.Sprintf("log-%05d", db.LogCounter),
-				Timestamp:  time.Now(),
-				AgentID:    "agent-01",
-				AgentName:  "Web-Prod-01",
-				Facility:   "web",
-				Severity:   severity,
-				Message:    fmt.Sprintf("BANK SECURITY ALARM: %s payload detected on %s from IP %s. Status: %s. Detail: %s", logItem.AttackType, logItem.Endpoint, logItem.ClientIP, logItem.Status, logItem.Description),
-				SourceIP:   logItem.ClientIP,
+				ID:        fmt.Sprintf("log-%05d", db.LogCounter),
+				Timestamp: time.Now(),
+				AgentID:   "agent-01",
+				AgentName: "Web-Prod-01",
+				Facility:  "web",
+				Severity:  severity,
+				Message:   fmt.Sprintf("BANK SECURITY ALARM: %s payload detected on %s from IP %s. Status: %s. Detail: %s", logItem.AttackType, logItem.Endpoint, logItem.ClientIP, logItem.Status, logItem.Description),
+				SourceIP:  logItem.ClientIP,
 			})
 
 			hasNewAlerts = true
@@ -956,6 +972,7 @@ func (db *Database) syncBankSecurityLogs() {
 	}
 
 	if hasNewAlerts {
+		log.Printf("[SYNC] Successfully ingested new bank security logs/alerts into PostgreSQL.")
 		if len(db.Logs) > 500 {
 			db.Logs = db.Logs[len(db.Logs)-500:]
 		}

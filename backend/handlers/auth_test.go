@@ -40,7 +40,7 @@ func (c *mockConn) Prepare(query string) (driver.Stmt, error) {
 	return &mockStmt{c.d, query}, nil
 }
 
-func (c *mockConn) Close() error { return nil }
+func (c *mockConn) Close() error              { return nil }
 func (c *mockConn) Begin() (driver.Tx, error) { return nil, nil }
 
 type mockStmt struct {
@@ -48,7 +48,7 @@ type mockStmt struct {
 	query string
 }
 
-func (s *mockStmt) Close() error { return nil }
+func (s *mockStmt) Close() error  { return nil }
 func (s *mockStmt) NumInput() int { return -1 }
 
 func (s *mockStmt) Exec(args []driver.Value) (driver.Result, error) {
@@ -66,6 +66,7 @@ func (s *mockStmt) Query(args []driver.Value) (driver.Rows, error) {
 }
 
 type mockResult struct{}
+
 func (r *mockResult) LastInsertId() (int64, error) { return 1, nil }
 func (r *mockResult) RowsAffected() (int64, error) { return 1, nil }
 
@@ -113,7 +114,7 @@ func (r *mockRows) Next(dest []driver.Value) error {
 		dest[0] = "10001"
 		dest[1] = "admin"
 		dest[2] = "192.0.2.100"
-		
+
 		isExpired := len(r.args) > 0 && r.args[0] == "expired-sql-session"
 		if isExpired {
 			dest[3] = time.Now().Add(-1 * time.Hour)
@@ -132,6 +133,7 @@ func setupTestStores() {
 	otpStore = make(map[string]otpData)
 	sessionStore = make(map[string]sessionData)
 	lockoutStore = make(map[string]lockoutData)
+	store.DB.BannedIPs = make(map[string]*models.BannedIP)
 	store.UsePostgres = false
 	theMockDriver.failQueries = false
 }
@@ -606,7 +608,7 @@ func TestCheckAuthAndSessionHijacking(t *testing.T) {
 		expiredReq.RemoteAddr = "192.0.2.100:1234"
 		expiredW := httptest.NewRecorder()
 		CheckAuth(expiredW, expiredReq)
-		
+
 		store.UsePostgres = false
 	})
 

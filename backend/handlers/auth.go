@@ -121,11 +121,7 @@ func generateSessionToken() string {
 
 // Helper: Get remote IP address
 func getIP(r *http.Request) string {
-	ip, _, err := net.SplitHostPort(r.RemoteAddr)
-	if err != nil {
-		return r.RemoteAddr
-	}
-	return ip
+	return requestClientIP(r)
 }
 
 // Helper: Check if brute force vulnerability is enabled in the Java Bank Backend
@@ -228,8 +224,6 @@ func RequestToken(w http.ResponseWriter, r *http.Request) {
 	} else {
 		username, isAllowed = allowedUIDs[uid]
 	}
-
-
 
 	// 3. Generate token
 	token := generateSecureSHA256Token()
@@ -577,7 +571,7 @@ func AuthMiddleware(next http.Handler) http.Handler {
 		w.Header().Set("Content-Security-Policy", "default-src 'none'; frame-ancestors 'none';")
 
 		// Bypass auth for health check and login endpoints
-		if r.URL.Path == "/health" || r.URL.Path == "/api/auth/request-token" || r.URL.Path == "/api/auth/login" || r.URL.Path == "/api/auth/check" || r.URL.Path == "/api/auth/logout" {
+		if r.URL.Path == "/health" || r.URL.Path == "/api/internal/ip-ban/check" || r.URL.Path == "/api/auth/request-token" || r.URL.Path == "/api/auth/login" || r.URL.Path == "/api/auth/check" || r.URL.Path == "/api/auth/logout" {
 			next.ServeHTTP(w, r)
 			return
 		}
@@ -593,14 +587,14 @@ func AuthMiddleware(next http.Handler) http.Handler {
 		if r.Method == http.MethodPost || r.Method == http.MethodPut || r.Method == http.MethodDelete {
 			origin := r.Header.Get("Origin")
 			referer := r.Header.Get("Referer")
-			
+
 			allowedOrigin := getAllowedOrigin(r)
 			isValidOrigin := origin == allowedOrigin
 			if !isValidOrigin {
 				allowedHosts := map[string]bool{
-					"littleboys.biz":          true,
-					"www.littleboys.biz":      true,
-					"soc.littleboys.biz":       true,
+					"littleboys.biz":                true,
+					"www.littleboys.biz":            true,
+					"soc.littleboys.biz":            true,
 					"d1y2tczt9tmz2d.cloudfront.net": true,
 				}
 				if origin != "" {

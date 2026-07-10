@@ -148,3 +148,11 @@ type AuthStatus struct {
 	ExpiresAt       time.Time `json:"expiresAt,omitempty"`
 }
 
+type BannedIP struct {
+	IPAddress string    `json:"ipAddress"`
+	BannedAt  time.Time `json:"bannedAt"`
+	BannedBy  string    `json:"bannedBy"`
+	Status    string    `json:"status"`
+	Reason    string    `json:"reason"`
+}
+

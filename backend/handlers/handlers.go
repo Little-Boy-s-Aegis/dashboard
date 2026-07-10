@@ -775,6 +775,14 @@ func PerformAction(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "actionType and target are required"})
 		return
 	}
+	if req.ActionType == "Block IP" || req.ActionType == "Unblock IP" {
+		normalizedTarget, normalizeErr := NormalizeIPExpression(req.Target)
+		if normalizeErr != nil {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "target must contain a valid IP address or CIDR range"})
+			return
+		}
+		req.Target = normalizedTarget
+	}
 
 	// Resolve the actual operator from cookie/bearer token to prevent spoofing
 	cookie, err := r.Cookie("session_token")
@@ -843,6 +851,20 @@ func PerformAction(w http.ResponseWriter, r *http.Request) {
 		}
 	} else if req.ActionType == "Block IP" {
 		detailMsg = fmt.Sprintf("Outbound and inbound traffic to IP %s blocked at firewall edge.", req.Target)
+		if err := store.SaveSQLBannedIP(req.Target, resolvedActor, "active", "Manual block from SOC Dashboard"); err != nil {
+			status = "failed"
+			detailMsg = fmt.Sprintf("Failed to persist IP block for %s: %v", req.Target, err)
+		} else if err := syncBankBannedIP(req.Target, resolvedActor, "active", "Manual block from SOC Dashboard"); err != nil {
+			detailMsg = fmt.Sprintf("%s Bank application sync warning: %v.", detailMsg, err)
+		}
+	} else if req.ActionType == "Unblock IP" {
+		detailMsg = fmt.Sprintf("Outbound and inbound traffic to IP %s unblocked.", req.Target)
+		if err := store.SaveSQLBannedIP(req.Target, resolvedActor, "unbanned", "Manual unblock from SOC Dashboard"); err != nil {
+			status = "failed"
+			detailMsg = fmt.Sprintf("Failed to persist IP unblock for %s: %v", req.Target, err)
+		} else if err := syncBankBannedIP(req.Target, resolvedActor, "unbanned", "Manual unblock from SOC Dashboard"); err != nil {
+			detailMsg = fmt.Sprintf("%s Bank application sync warning: %v.", detailMsg, err)
+		}
 	} else if req.ActionType == "Terminate Process" {
 		detailMsg = fmt.Sprintf("Process successfully terminated on destination agent.")
 	} else if req.ActionType == "Revoke Credentials" {
@@ -939,6 +961,9 @@ func HandleInternalSoarDecision(w http.ResponseWriter, r *http.Request) {
 				mappedActionType = "Preserve Logs"
 			}
 
+			actionStatus := "success"
+			actionTarget := act.Target.ValueMasked
+
 			// Apply simulation side effects
 			detailMsg := act.Rationale
 			if mappedActionType == "Isolate Host" {
@@ -949,6 +974,20 @@ func HandleInternalSoarDecision(w http.ResponseWriter, r *http.Request) {
 						break
 					}
 				}
+			} else if mappedActionType == "Block IP" {
+				normalizedTarget, normalizeErr := NormalizeIPExpression(act.Target.ValueMasked)
+				if normalizeErr != nil {
+					actionStatus = "failed"
+					detailMsg = fmt.Sprintf("SOAR block_ip target rejected as invalid IP/CIDR: %s", act.Target.ValueMasked)
+				} else {
+					actionTarget = normalizedTarget
+					if err := store.SaveSQLBannedIP(normalizedTarget, "SOAR L2 Orchestrator", "active", act.Rationale); err != nil {
+						actionStatus = "failed"
+						detailMsg = fmt.Sprintf("Failed to persist SOAR IP block for %s: %v", normalizedTarget, err)
+					} else if err := syncBankBannedIP(normalizedTarget, "SOAR L2 Orchestrator", "active", act.Rationale); err != nil {
+						detailMsg = fmt.Sprintf("%s Bank application sync warning: %v.", detailMsg, err)
+					}
+				}
 			}
 
 			actionLog := &models.ActionLog{
@@ -956,8 +995,8 @@ func HandleInternalSoarDecision(w http.ResponseWriter, r *http.Request) {
 				Timestamp:  time.Now(),
 				Actor:      "SOAR L2 Orchestrator",
 				ActionType: mappedActionType,
-				Target:     act.Target.ValueMasked,
-				Status:     "success",
+				Target:     actionTarget,
+				Status:     actionStatus,
 				Message:    detailMsg,
 			}
 
@@ -973,7 +1012,7 @@ func HandleInternalSoarDecision(w http.ResponseWriter, r *http.Request) {
 			}
 
 			store.DB.ActionLogs = append(store.DB.ActionLogs, actionLog)
-			processedActions = append(processedActions, fmt.Sprintf("%s on %s", mappedActionType, act.Target.ValueMasked))
+			processedActions = append(processedActions, fmt.Sprintf("%s on %s", mappedActionType, actionTarget))
 		}
 	}
 
@@ -1018,11 +1057,11 @@ func HandleInternalSoarDecision(w http.ResponseWriter, r *http.Request) {
 			}
 
 			alert := &models.Alert{
-				ID:             newAlertID,
-				RuleID:         "rule-soar-" + info.IncidentID,
-				Severity:       info.Severity,
-				Title:          "SOAR L2 Confirmed - " + info.AttackType,
-				Description:    fmt.Sprintf("Confirmed attack of type %s from IP %s. Affected accounts: %s. Justification: %s",
+				ID:       newAlertID,
+				RuleID:   "rule-soar-" + info.IncidentID,
+				Severity: info.Severity,
+				Title:    "SOAR L2 Confirmed - " + info.AttackType,
+				Description: fmt.Sprintf("Confirmed attack of type %s from IP %s. Affected accounts: %s. Justification: %s",
 					info.AttackType, info.SourceIP, info.AffectedAccount, dec.Decision.Justification),
 				AgentID:        agentID,
 				AgentName:      agentName,
@@ -1124,3 +1163,51 @@ func GetSoarMetrics(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, metrics)
 }
 
+// GET /api/settings
+func GetSettings(w http.ResponseWriter, r *http.Request) {
+	val, err := store.GetSQLSetting("soc_autopilot_enabled")
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "Failed to read setting"})
+		return
+	}
+	enabled := (val == "true")
+	writeJSON(w, http.StatusOK, map[string]interface{}{
+		"soc_autopilot_enabled": enabled,
+	})
+}
+
+// POST /api/settings
+func SaveSettings(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		AutopilotEnabled bool `json:"soc_autopilot_enabled"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "Invalid request body"})
+		return
+	}
+
+	val := "false"
+	if req.AutopilotEnabled {
+		val = "true"
+	}
+
+	if err := store.SaveSQLSetting("soc_autopilot_enabled", val); err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "Failed to save setting"})
+		return
+	}
+
+	writeJSON(w, http.StatusOK, map[string]interface{}{
+		"message":               "Settings updated successfully",
+		"soc_autopilot_enabled": req.AutopilotEnabled,
+	})
+}
+
+// GET /api/banned-ips
+func GetBannedIPs(w http.ResponseWriter, r *http.Request) {
+	list, err := store.GetSQLBannedIPs()
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "Failed to fetch banned IPs"})
+		return
+	}
+	writeJSON(w, http.StatusOK, list)
+}

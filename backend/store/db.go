@@ -3,6 +3,8 @@ package store
 import (
 	"database/sql"
 	"log"
+	"net"
+	"net/netip"
 	"os"
 	"strings"
 	"time"
@@ -253,6 +255,48 @@ func runMigrations() {
 	`)
 	if err != nil {
 		log.Fatalf("Migration failed (indexes): %v", err)
+	}
+
+	// 10. System Settings Table
+	_, err = SQL.Exec(`
+		CREATE TABLE IF NOT EXISTS system_settings (
+			key VARCHAR(100) PRIMARY KEY,
+			value VARCHAR(255) NOT NULL
+		)
+	`)
+	if err != nil {
+		log.Fatalf("Migration failed (system_settings): %v", err)
+	}
+
+	// Seed default autopilot setting
+	_, err = SQL.Exec(`
+		INSERT INTO system_settings (key, value)
+		VALUES ('soc_autopilot_enabled', 'false')
+		ON CONFLICT (key) DO NOTHING
+	`)
+	if err != nil {
+		log.Printf("[DATABASE WARNING] Failed to seed default system settings: %v", err)
+	}
+
+	// 11. Banned IPs Table
+	_, err = SQL.Exec(`
+		CREATE TABLE IF NOT EXISTS banned_ips (
+			ip_address VARCHAR(64) PRIMARY KEY,
+			banned_at TIMESTAMP WITH TIME ZONE NOT NULL,
+			banned_by VARCHAR(100) NOT NULL,
+			status VARCHAR(20) NOT NULL,
+			reason TEXT NOT NULL
+		)
+	`)
+	if err != nil {
+		log.Fatalf("Migration failed (banned_ips): %v", err)
+	}
+	_, err = SQL.Exec(`
+		ALTER TABLE banned_ips ALTER COLUMN ip_address TYPE VARCHAR(64);
+		CREATE INDEX IF NOT EXISTS idx_banned_ips_status ON banned_ips(status);
+	`)
+	if err != nil {
+		log.Printf("[DATABASE WARNING] Banned IP schema hardening skipped: %v", err)
 	}
 
 	log.Printf("[DATABASE] Schema migrations completed successfully.")
@@ -541,4 +585,145 @@ func LoadSQLActionLogs() ([]*models.ActionLog, error) {
 		logs = append(logs, &l)
 	}
 	return logs, nil
+}
+
+func SaveSQLBannedIP(ip string, actor string, status string, reason string) error {
+	if DB != nil && !UsePostgres {
+		DB.BannedIPs[ip] = &models.BannedIP{
+			IPAddress: ip,
+			BannedAt:  time.Now(),
+			BannedBy:  actor,
+			Status:    status,
+			Reason:    reason,
+		}
+		return nil
+	}
+	if !UsePostgres {
+		return nil
+	}
+	_, err := SQL.Exec(`
+		INSERT INTO banned_ips (ip_address, banned_at, banned_by, status, reason)
+		VALUES ($1, $2, $3, $4, $5)
+		ON CONFLICT (ip_address) DO UPDATE
+		SET banned_at = EXCLUDED.banned_at, banned_by = EXCLUDED.banned_by, status = EXCLUDED.status, reason = EXCLUDED.reason
+	`, ip, time.Now(), actor, status, reason)
+	if err != nil {
+		log.Printf("[DATABASE ERROR] Failed to save banned IP: %v", err)
+	}
+	return err
+}
+
+func GetSQLBannedIPs() ([]*models.BannedIP, error) {
+	if DB != nil && !UsePostgres {
+		DB.Mu.RLock()
+		defer DB.Mu.RUnlock()
+		list := make([]*models.BannedIP, 0, len(DB.BannedIPs))
+		for _, b := range DB.BannedIPs {
+			copy := *b
+			list = append(list, &copy)
+		}
+		return list, nil
+	}
+	if !UsePostgres {
+		return []*models.BannedIP{}, nil
+	}
+	rows, err := SQL.Query("SELECT ip_address, banned_at, banned_by, status, reason FROM banned_ips ORDER BY banned_at DESC")
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	list := []*models.BannedIP{}
+	for rows.Next() {
+		var b models.BannedIP
+		var ts time.Time
+		err := rows.Scan(&b.IPAddress, &ts, &b.BannedBy, &b.Status, &b.Reason)
+		if err != nil {
+			log.Printf("[DATABASE ERROR] Scan banned IP row failed: %v", err)
+			continue
+		}
+		b.BannedAt = ts
+		list = append(list, &b)
+	}
+	return list, nil
+}
+
+func IsIPBanned(rawIP string) (bool, error) {
+	addr, ok := parseAddr(rawIP)
+	if !ok {
+		return false, nil
+	}
+
+	bans, err := GetSQLBannedIPs()
+	if err != nil {
+		return false, err
+	}
+
+	for _, ban := range bans {
+		if ban.Status != "active" {
+			continue
+		}
+		if banMatchesAddr(ban.IPAddress, addr) {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
+func banMatchesAddr(rule string, addr netip.Addr) bool {
+	candidate := strings.TrimSpace(rule)
+	if strings.HasPrefix(strings.ToLower(candidate), "ip ") {
+		candidate = strings.TrimSpace(candidate[3:])
+	}
+	if prefix, err := netip.ParsePrefix(candidate); err == nil {
+		return prefix.Masked().Contains(addr)
+	}
+	banAddr, err := netip.ParseAddr(candidate)
+	if err != nil {
+		return false
+	}
+	return banAddr.Unmap() == addr.Unmap()
+}
+
+func parseAddr(rawIP string) (netip.Addr, bool) {
+	candidate := strings.TrimSpace(rawIP)
+	if candidate == "" {
+		return netip.Addr{}, false
+	}
+	if strings.HasPrefix(candidate, "[") && strings.Contains(candidate, "]") {
+		candidate = strings.TrimPrefix(candidate, "[")
+		candidate = candidate[:strings.Index(candidate, "]")]
+	} else if host, _, err := net.SplitHostPort(candidate); err == nil {
+		candidate = host
+	}
+	addr, err := netip.ParseAddr(candidate)
+	if err != nil {
+		return netip.Addr{}, false
+	}
+	return addr.Unmap(), true
+}
+
+func GetSQLSetting(key string) (string, error) {
+	if !UsePostgres {
+		return "false", nil
+	}
+	var val string
+	err := SQL.QueryRow("SELECT value FROM system_settings WHERE key = $1", key).Scan(&val)
+	if err != nil {
+		return "", err
+	}
+	return val, nil
+}
+
+func SaveSQLSetting(key string, val string) error {
+	if !UsePostgres {
+		return nil
+	}
+	_, err := SQL.Exec(`
+		INSERT INTO system_settings (key, value)
+		VALUES ($1, $2)
+		ON CONFLICT (key) DO UPDATE
+		SET value = EXCLUDED.value
+	`, key, val)
+	return err
 }

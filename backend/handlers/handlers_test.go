@@ -277,11 +277,11 @@ func TestAlertOperations(t *testing.T) {
 func TestBulkAlertOperations(t *testing.T) {
 	store.DB.Mu.Lock()
 	store.DB.Alerts = append(store.DB.Alerts, &models.Alert{
-		ID:    "al-bulk-1",
+		ID:     "al-bulk-1",
 		Status: "open",
 	})
 	store.DB.Alerts = append(store.DB.Alerts, &models.Alert{
-		ID:    "al-bulk-2",
+		ID:     "al-bulk-2",
 		Status: "open",
 	})
 	store.DB.Mu.Unlock()
@@ -426,6 +426,43 @@ func TestSimulationAndActions(t *testing.T) {
 		PerformAction(w, req)
 		if w.Code != http.StatusOK {
 			t.Errorf("Expected status 200, got %d", w.Code)
+		}
+	})
+
+	t.Run("Perform Action - Block IP normalizes target and enforces ban", func(t *testing.T) {
+		setupTestStores()
+		payload := `{"actionType":"Block IP","target":"IP 198.51.100.222"}`
+		req := httptest.NewRequest("POST", "/api/actions", bytes.NewBufferString(payload))
+		w := httptest.NewRecorder()
+		PerformAction(w, req)
+		if w.Code != http.StatusOK {
+			t.Errorf("Expected status 200, got %d", w.Code)
+		}
+
+		if _, ok := store.DB.BannedIPs["198.51.100.222"]; !ok {
+			t.Fatal("Expected normalized banned IP to be saved")
+		}
+
+		protected := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.WriteHeader(http.StatusOK)
+		})
+		banChecked := IPBanMiddleware(protected)
+		blockedReq := httptest.NewRequest("GET", "/api/summary", nil)
+		blockedReq.RemoteAddr = "198.51.100.222:45678"
+		blockedResp := httptest.NewRecorder()
+		banChecked.ServeHTTP(blockedResp, blockedReq)
+		if blockedResp.Code != http.StatusForbidden {
+			t.Errorf("Expected banned IP middleware status 403, got %d", blockedResp.Code)
+		}
+	})
+
+	t.Run("Perform Action - Block IP rejects invalid target", func(t *testing.T) {
+		payload := `{"actionType":"Block IP","target":"not-an-ip"}`
+		req := httptest.NewRequest("POST", "/api/actions", bytes.NewBufferString(payload))
+		w := httptest.NewRecorder()
+		PerformAction(w, req)
+		if w.Code != http.StatusBadRequest {
+			t.Errorf("Expected status 400, got %d", w.Code)
 		}
 	})
 

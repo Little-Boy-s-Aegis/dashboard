@@ -1,12 +1,12 @@
 import { useState, useEffect } from 'react';
-import { Search, Eye, CheckCircle, Sparkles, Copy, RefreshCw, Terminal } from 'lucide-react';
+import { Search, Eye, CheckCircle, Sparkles, Copy, RefreshCw, Terminal, ShieldAlert, ShieldOff } from 'lucide-react';
 import type { Alert, AIAnalysis } from '../types';
 
 const getAttackerIp = (rawLog?: string): string => {
   if (!rawLog) return 'N/A';
   try {
     const parsed = JSON.parse(rawLog);
-    return parsed.clientIp || parsed.client_ip || parsed.sourceIp || parsed.srcIp || parsed.ip || 'N/A';
+    return parsed.clientIp || parsed.client_ip || parsed.sourceIp || parsed.source_ip || parsed.srcIp || parsed.ip || 'N/A';
   } catch {
     return 'N/A';
   }
@@ -30,6 +30,77 @@ export default function AlertsManager({ alerts, onRefresh, initialMitreFilter, o
   const [loadingAI, setLoadingAI] = useState<string | null>(null);
   const [copiedId, setCopiedId] = useState<string | null>(null);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  const [bannedIps, setBannedIps] = useState<string[]>([]);
+  const [banningIp, setBanningIp] = useState<string | null>(null);
+
+  const fetchBannedIps = async () => {
+    try {
+      const res = await fetch('/api/banned-ips');
+      if (res.ok) {
+        const data = await res.json();
+        const active = data.filter((item: any) => item.status === 'active').map((item: any) => item.ipAddress || item.ip_address);
+        setBannedIps(active);
+      }
+    } catch (e) {
+      console.error(e);
+    }
+  };
+
+  useEffect(() => {
+    fetchBannedIps();
+  }, []);
+
+  const handleBanIp = async (ip: string, e: React.MouseEvent) => {
+    e.stopPropagation();
+    if (banningIp) return;
+    setBanningIp(ip);
+    try {
+      const res = await fetch('/api/actions', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          actor: 'SOC (admin)',
+          actionType: 'Block IP',
+          target: ip,
+          message: 'Quick ban from Alerts & Incidents table'
+        })
+      });
+      if (res.ok) {
+        setBannedIps(prev => [...prev, ip]);
+        onRefresh();
+      }
+    } catch (err) {
+      console.error(err);
+    } finally {
+      setBanningIp(null);
+    }
+  };
+
+  const handleUnbanIp = async (ip: string, e: React.MouseEvent) => {
+    e.stopPropagation();
+    if (banningIp) return;
+    setBanningIp(ip);
+    try {
+      const res = await fetch('/api/actions', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          actor: 'SOC (admin)',
+          actionType: 'Unblock IP',
+          target: ip,
+          message: 'Quick unban from Alerts & Incidents table'
+        })
+      });
+      if (res.ok) {
+        setBannedIps(prev => prev.filter(x => x !== ip));
+        onRefresh();
+      }
+    } catch (err) {
+      console.error(err);
+    } finally {
+      setBanningIp(null);
+    }
+  };
 
   useEffect(() => {
     if (initialMitreFilter) { setSearchQuery(initialMitreFilter); onClearMitreFilter?.(); }
@@ -67,8 +138,26 @@ export default function AlertsManager({ alerts, onRefresh, initialMitreFilter, o
     } catch (e) { console.error(e); } finally { setLoadingAI(null); }
   };
 
-  const handleResolve = async (id: string) => {
-    try { const r = await fetch(`/api/alerts/${id}/resolve`, { method: 'POST' }); if (r.ok) onRefresh(); } catch {}
+
+
+  const handleResolveAndUnban = async (id: string, ip: string) => {
+    try {
+      await fetch(`/api/alerts/${id}/resolve`, { method: 'POST' });
+      if (ip !== 'N/A' && bannedIps.includes(ip)) {
+        await fetch('/api/actions', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            actor: 'SOC (admin)',
+            actionType: 'Unblock IP',
+            target: ip,
+            message: 'Auto unban on resolving alert'
+          })
+        });
+        setBannedIps(prev => prev.filter(x => x !== ip));
+      }
+      onRefresh();
+    } catch {}
   };
 
   const handleAssign = async (id: string, assignee: string) => {
@@ -144,7 +233,7 @@ export default function AlertsManager({ alerts, onRefresh, initialMitreFilter, o
                 <col style={{ width: 60 }} />
                 <col style={{ width: 110 }} />
                 <col style={{ width: 68 }} />
-                <col style={{ width: 60 }} />
+                <col style={{ width: 120 }} />
               </colgroup>
               <thead>
                 <tr>
@@ -182,7 +271,63 @@ export default function AlertsManager({ alerts, onRefresh, initialMitreFilter, o
                       </select>
                     </td>
                     <td><span className={`badge ${a.status === 'resolved' ? 'badge-info' : a.status === 'investigating' ? 'badge-medium' : 'badge-neutral'}`}>{a.status}</span></td>
-                    <td><button className="btn btn-outline" onClick={e => { e.stopPropagation(); setSelectedAlertId(a.id); }} style={{ padding: '2px 6px', fontSize: '0.68rem' }}><Eye size={10} /></button></td>
+                    <td onClick={e => e.stopPropagation()}>
+                      <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+                        <button className="btn btn-outline" onClick={e => { e.stopPropagation(); setSelectedAlertId(a.id); }} style={{ padding: '2px 6px', fontSize: '0.68rem' }} title="View Details"><Eye size={10} /></button>
+                        {(() => {
+                          const ip = getAttackerIp(a.rawLog);
+                          if (ip === 'N/A') return null;
+                          const isBanned = bannedIps.includes(ip);
+                          return isBanned ? (
+                            <button
+                              onClick={e => handleUnbanIp(ip, e)}
+                              disabled={banningIp === ip}
+                              style={{
+                                background: 'rgba(16, 185, 129, 0.15)',
+                                border: '1px solid rgba(16, 185, 129, 0.4)',
+                                color: '#34d399',
+                                padding: '2px 6px',
+                                fontSize: '0.66rem',
+                                borderRadius: 'var(--r-xs)',
+                                cursor: 'pointer',
+                                display: 'inline-flex',
+                                alignItems: 'center',
+                                gap: '3px',
+                                fontWeight: 600,
+                                outline: 'none'
+                              }}
+                              title="IP is currently banned. Click to unban."
+                            >
+                              <ShieldOff size={10} />
+                              Unban
+                            </button>
+                          ) : (
+                            <button
+                              onClick={e => handleBanIp(ip, e)}
+                              disabled={banningIp === ip}
+                              style={{
+                                background: 'rgba(239, 68, 68, 0.15)',
+                                border: '1px solid rgba(239, 68, 68, 0.4)',
+                                color: '#f87171',
+                                padding: '2px 6px',
+                                fontSize: '0.66rem',
+                                borderRadius: 'var(--r-xs)',
+                                cursor: 'pointer',
+                                display: 'inline-flex',
+                                alignItems: 'center',
+                                gap: '3px',
+                                fontWeight: 600,
+                                outline: 'none'
+                              }}
+                              title="Ban Attacker IP"
+                            >
+                              <ShieldAlert size={10} />
+                              Ban IP
+                            </button>
+                          );
+                        })()}
+                      </div>
+                    </td>
                   </tr>
                 ))}
                 {filtered.length === 0 && <tr><td colSpan={9} style={{ textAlign: 'center', color: 'var(--text-3)', padding: '32px 0' }}>No alerts match filters.</td></tr>}
@@ -221,8 +366,56 @@ export default function AlertsManager({ alerts, onRefresh, initialMitreFilter, o
           </div>
 
           <div style={{ display: 'flex', gap: 6 }}>
-            {selected.status !== 'resolved' && <button className="btn btn-primary" onClick={() => handleResolve(selected.id)} style={{ flex: 1 }}><CheckCircle size={12} /> Resolve</button>}
-            <button className="btn btn-outline" onClick={() => clip(selected.rawLog, 'raw')}><Copy size={12} /> {copiedId === 'raw' ? 'Copied' : 'Copy'}</button>
+            {selected.status !== 'resolved' && (
+              <button className="btn btn-primary" onClick={() => handleResolveAndUnban(selected.id, getAttackerIp(selected.rawLog))} style={{ flex: 1 }}>
+                <CheckCircle size={12} /> Resolve & Unban
+              </button>
+            )}
+            {(() => {
+              const ip = getAttackerIp(selected.rawLog);
+              if (ip === 'N/A') return null;
+              const isBanned = bannedIps.includes(ip);
+              return isBanned ? (
+                <button
+                  className="btn"
+                  onClick={e => handleUnbanIp(ip, e)}
+                  disabled={banningIp === ip}
+                  style={{
+                    background: 'rgba(16, 185, 129, 0.15)',
+                    border: '1px solid rgba(16, 185, 129, 0.4)',
+                    color: '#34d399',
+                    display: 'inline-flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    gap: '4px',
+                    fontWeight: 600,
+                    flex: 1
+                  }}
+                >
+                  <ShieldOff size={12} /> Unban IP
+                </button>
+              ) : (
+                <button
+                  className="btn"
+                  onClick={e => handleBanIp(ip, e)}
+                  disabled={banningIp === ip}
+                  style={{
+                    background: 'rgba(239, 68, 68, 0.15)',
+                    border: '1px solid rgba(239, 68, 68, 0.4)',
+                    color: '#f87171',
+                    display: 'inline-flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    gap: '4px',
+                    fontWeight: 600,
+                    flex: 1
+                  }}
+                >
+                  <ShieldAlert size={12} /> Ban IP
+                </button>
+              );
+            })()}
+            <button className="btn btn-outline" onClick={() => clip(selected.rawLog, 'raw')} style={{ flex: 0.5 }}><Copy size={12} /> {copiedId === 'raw' ? 'Copied' : 'Copy'}</button>
           </div>
 
           {/* AI */}
