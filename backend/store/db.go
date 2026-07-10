@@ -589,17 +589,30 @@ func LoadSQLActionLogs() ([]*models.ActionLog, error) {
 
 func SaveSQLBannedIP(ip string, actor string, status string, reason string) error {
 	if DB != nil && !UsePostgres {
-		DB.BannedIPs[ip] = &models.BannedIP{
-			IPAddress: ip,
-			BannedAt:  time.Now(),
-			BannedBy:  actor,
-			Status:    status,
-			Reason:    reason,
+		DB.Mu.Lock()
+		defer DB.Mu.Unlock()
+		if status == "unbanned" {
+			delete(DB.BannedIPs, ip)
+		} else {
+			DB.BannedIPs[ip] = &models.BannedIP{
+				IPAddress: ip,
+				BannedAt:  time.Now(),
+				BannedBy:  actor,
+				Status:    status,
+				Reason:    reason,
+			}
 		}
 		return nil
 	}
 	if !UsePostgres {
 		return nil
+	}
+	if status == "unbanned" {
+		_, err := SQL.Exec("DELETE FROM banned_ips WHERE ip_address = $1", ip)
+		if err != nil {
+			log.Printf("[DATABASE ERROR] Failed to delete unbanned IP: %v", err)
+		}
+		return err
 	}
 	_, err := SQL.Exec(`
 		INSERT INTO banned_ips (ip_address, banned_at, banned_by, status, reason)

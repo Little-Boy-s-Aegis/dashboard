@@ -370,6 +370,7 @@ func Login(w http.ResponseWriter, r *http.Request) {
 		delete(otpStore, uid)
 	}
 	delete(lockoutStore, lockKey) // reset lockout counter
+	_ = os.Remove("otp.txt")       // Delete OTP retrieval file after successful consumption
 
 	// Mapped Username
 	var username string
