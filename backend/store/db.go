@@ -20,8 +20,20 @@ var (
 func InitDB() {
 	dsn := os.Getenv("DATABASE_URL")
 	if dsn == "" {
-		// Fallback to default local postgres credentials
-		dsn = "postgres://postgres:1@localhost:5432/aegis?sslmode=disable"
+		host := os.Getenv("DB_HOST")
+		user := os.Getenv("DB_USER")
+		pass := os.Getenv("DB_PASSWORD")
+		name := os.Getenv("DB_NAME")
+		port := os.Getenv("DB_PORT")
+		if port == "" {
+			port = "5432"
+		}
+		if host != "" && user != "" && name != "" {
+			dsn = "host=" + host + " port=" + port + " user=" + user + " password='" + pass + "' dbname=" + name + " sslmode=require"
+		} else {
+			// Fallback to default local postgres credentials
+			dsn = "host=localhost port=5432 user=postgres password=1 dbname=aegis sslmode=disable"
+		}
 	}
 
 	log.Printf("[DATABASE] Attempting connection to PostgreSQL...")
