@@ -119,10 +119,82 @@ func IPBanMiddleware(next http.Handler) http.Handler {
 		}
 		if banned {
 			log.Printf("[IP BAN] Blocked dashboard request from banned IP %s", ip)
-			writeJSON(w, http.StatusForbidden, map[string]string{"error": "Forbidden: your IP is banned"})
+			revokeDashboardAuth(w, r)
+			writeIPBannedResponse(w, r)
 			return
 		}
 		next.ServeHTTP(w, r)
+	})
+}
+
+func revokeDashboardAuth(w http.ResponseWriter, r *http.Request) {
+	sessionToken := ""
+	if cookie, err := r.Cookie("session_token"); err == nil {
+		sessionToken = cookie.Value
+	} else if authHeader := r.Header.Get("Authorization"); strings.HasPrefix(authHeader, "Bearer ") {
+		sessionToken = strings.TrimPrefix(authHeader, "Bearer ")
+	}
+
+	if sessionToken != "" {
+		authMu.Lock()
+		if store.UsePostgres {
+			_ = store.DeleteSQLSession(sessionToken)
+		} else {
+			delete(sessionStore, sessionToken)
+		}
+		authMu.Unlock()
+	}
+
+	http.SetCookie(w, &http.Cookie{
+		Name:     "session_token",
+		Value:    "",
+		Path:     "/",
+		Expires:  time.Unix(0, 0),
+		MaxAge:   -1,
+		HttpOnly: true,
+		Secure:   true,
+		SameSite: http.SameSiteLaxMode,
+	})
+}
+
+func writeIPBannedResponse(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("X-Aegis-IP-Banned", "true")
+	w.Header().Set("Cache-Control", "no-store, no-cache, max-age=0, must-revalidate")
+	w.Header().Set("Clear-Site-Data", "\"cache\", \"cookies\", \"storage\"")
+
+	accept := r.Header.Get("Accept")
+	if strings.Contains(accept, "text/html") && !strings.Contains(accept, "application/json") {
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		w.WriteHeader(http.StatusForbidden)
+		_, _ = w.Write([]byte(`<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Access Revoked | Aegis SOC</title>
+  <style>
+    body { margin: 0; min-height: 100vh; display: grid; place-items: center; background: #0a0d14; color: #f8fafc; font-family: Inter, Arial, sans-serif; }
+    main { width: min(560px, calc(100vw - 32px)); border: 1px solid rgba(244, 63, 94, .35); background: #111522; padding: 32px; box-shadow: 0 24px 80px rgba(0,0,0,.35); }
+    h1 { margin: 0 0 12px; font-size: 28px; }
+    p { margin: 8px 0; color: #cbd5e1; line-height: 1.55; }
+    code { display: inline-block; margin-top: 14px; padding: 8px 10px; background: rgba(244, 63, 94, .12); color: #fecdd3; }
+  </style>
+</head>
+<body>
+  <main>
+    <h1>Access revoked</h1>
+    <p>Your IP address has been blocked by the Aegis SOC security policy.</p>
+    <p>Your active SOC session has been revoked and browser authentication state has been cleared.</p>
+    <code>403 IP_BANNED</code>
+  </main>
+</body>
+</html>`))
+		return
+	}
+
+	writeJSON(w, http.StatusForbidden, map[string]string{
+		"error":    "Forbidden: your IP is banned",
+		"redirect": "/banned",
 	})
 }
 
