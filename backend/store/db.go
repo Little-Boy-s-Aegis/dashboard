@@ -2,6 +2,7 @@ package store
 
 import (
 	"database/sql"
+	"fmt"
 	"log"
 	"net"
 	"net/netip"
@@ -598,6 +599,18 @@ func LoadSQLActionLogs() ([]*models.ActionLog, error) {
 }
 
 func SaveSQLBannedIP(ip string, actor string, status string, reason string) error {
+	if status != "unbanned" {
+		ipPart := ip
+		if idx := strings.Index(ipPart, "/"); idx != -1 {
+			ipPart = ipPart[:idx]
+		}
+		if parsedIP := net.ParseIP(ipPart); parsedIP != nil {
+			if parsedIP.IsLoopback() || parsedIP.IsPrivate() || parsedIP.IsUnspecified() {
+				return fmt.Errorf("cannot ban private or loopback IP range: %s", ip)
+			}
+		}
+	}
+
 	if DB != nil && !UsePostgres {
 		DB.Mu.Lock()
 		defer DB.Mu.Unlock()

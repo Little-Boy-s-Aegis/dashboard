@@ -65,6 +65,15 @@ func requestIPCandidates(r *http.Request) []string {
 	add := func(value string) {
 		normalized, err := NormalizeIPExpression(value)
 		if err == nil && !seen[normalized] {
+			ipPart := normalized
+			if idx := strings.Index(ipPart, "/"); idx != -1 {
+				ipPart = ipPart[:idx]
+			}
+			if ip := net.ParseIP(ipPart); ip != nil {
+				if ip.IsLoopback() || ip.IsPrivate() || ip.IsUnspecified() {
+					return
+				}
+			}
 			seen[normalized] = true
 			ips = append(ips, normalized)
 		}
