@@ -387,12 +387,7 @@ export default function OrchestratorChat({ agents }: Props) {
   const prevTabRef = useRef(activeTab);
   const prevMsgCountRef = useRef(0);
 
-  // Helper to check if chat is near the bottom
-  const isNearBottom = () => {
-    if (!chatScrollContainerRef.current) return true;
-    const el = chatScrollContainerRef.current;
-    return el.scrollHeight - el.clientHeight - el.scrollTop < 180;
-  };
+
 
   // Reset active highlighted message when tab changes
   useEffect(() => {
@@ -406,8 +401,8 @@ export default function OrchestratorChat({ agents }: Props) {
     const tabChanged = prevTabRef.current !== activeTab;
     const newMsgAdded = msgCount > prevMsgCountRef.current;
     
-    // Auto scroll if first render, tab changed, or user is already near the bottom
-    const shouldScroll = isFirstRender.current || tabChanged || (newMsgAdded && isNearBottom());
+    // Auto scroll if first render, tab changed, or new message added
+    const shouldScroll = isFirstRender.current || tabChanged || newMsgAdded;
 
     if (shouldScroll) {
       setTimeout(() => {
