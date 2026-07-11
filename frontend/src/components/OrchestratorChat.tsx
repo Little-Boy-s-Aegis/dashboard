@@ -46,6 +46,9 @@ export default function OrchestratorChat({ agents }: Props) {
 
   const chatEndRef = useRef<HTMLDivElement>(null);
   const jsonStreamRef = useRef<HTMLDivElement>(null);
+  const chatScrollContainerRef = useRef<HTMLDivElement>(null);
+  const isScrollingChat = useRef(false);
+  const isScrollingJson = useRef(false);
 
   // Fetch real-time security events & SOAR actions from the backend APIs
   useEffect(() => {
@@ -373,16 +376,115 @@ export default function OrchestratorChat({ agents }: Props) {
     }
   }, [agents, conversations, activeTab]);
 
-  // Scroll to bottom of chat and json stream when messages change
+  // Ref to track last active tab and message count to prevent scrolling during active reading
+  const prevTabRef = useRef(activeTab);
+  const prevMsgCountRef = useRef(0);
+
+  // Helper to check if chat is near the bottom
+  const isNearBottom = () => {
+    if (!chatScrollContainerRef.current) return true;
+    const el = chatScrollContainerRef.current;
+    return el.scrollHeight - el.clientHeight - el.scrollTop < 180;
+  };
+
+  // Scroll to bottom of chat and json stream when messages change, but respect user scrolling
   useEffect(() => {
-    chatEndRef.current?.scrollIntoView({ behavior: 'smooth' });
-    if (jsonStreamRef.current) {
-      jsonStreamRef.current.scrollTo({
-        top: jsonStreamRef.current.scrollHeight,
-        behavior: 'smooth'
-      });
+    const chatEl = chatScrollContainerRef.current;
+    const jsonEl = jsonStreamRef.current;
+    const msgCount = activeConv?.messages.length || 0;
+
+    const tabChanged = prevTabRef.current !== activeTab;
+    const newMsgAdded = msgCount > prevMsgCountRef.current;
+    
+    // Auto scroll if tab changed, or user is already near the bottom
+    const shouldScroll = tabChanged || (newMsgAdded && isNearBottom());
+
+    if (shouldScroll) {
+      if (chatEl) {
+        chatEl.scrollTop = chatEl.scrollHeight;
+      }
+      if (jsonEl) {
+        jsonEl.scrollTop = jsonEl.scrollHeight;
+      }
     }
+
+    prevTabRef.current = activeTab;
+    prevMsgCountRef.current = msgCount;
   }, [conversations, activeTab, isTyping]);
+
+  const handleChatScroll = () => {
+    if (isScrollingJson.current) return;
+    if (chatScrollContainerRef.current && jsonStreamRef.current) {
+      isScrollingChat.current = true;
+      const chatEl = chatScrollContainerRef.current;
+      const jsonEl = jsonStreamRef.current;
+
+      const chatChildren = Array.from(chatEl.children);
+      const scrollTop = chatEl.scrollTop;
+      let activeId = null;
+      let offsetDiff = 0;
+
+      for (let i = 0; i < chatChildren.length; i++) {
+        const child = chatChildren[i] as HTMLElement;
+        if (child.id && child.id.startsWith('msg-left-')) {
+          const childTop = child.offsetTop;
+          if (childTop + child.clientHeight >= scrollTop) {
+            activeId = child.id.replace('msg-left-', '');
+            offsetDiff = scrollTop - childTop;
+            break;
+          }
+        }
+      }
+
+      if (activeId) {
+        const rightEl = document.getElementById(`msg-right-${activeId}`);
+        if (rightEl) {
+          jsonEl.scrollTop = rightEl.offsetTop + offsetDiff;
+        }
+      }
+
+      setTimeout(() => {
+        isScrollingChat.current = false;
+      }, 50);
+    }
+  };
+
+  const handleJsonScroll = () => {
+    if (isScrollingChat.current) return;
+    if (chatScrollContainerRef.current && jsonStreamRef.current) {
+      isScrollingJson.current = true;
+      const chatEl = chatScrollContainerRef.current;
+      const jsonEl = jsonStreamRef.current;
+
+      const jsonChildren = Array.from(jsonEl.children);
+      const scrollTop = jsonEl.scrollTop;
+      let activeId = null;
+      let offsetDiff = 0;
+
+      for (let i = 0; i < jsonChildren.length; i++) {
+        const child = jsonChildren[i] as HTMLElement;
+        if (child.id && child.id.startsWith('msg-right-')) {
+          const childTop = child.offsetTop;
+          if (childTop + child.clientHeight >= scrollTop) {
+            activeId = child.id.replace('msg-right-', '');
+            offsetDiff = scrollTop - childTop;
+            break;
+          }
+        }
+      }
+
+      if (activeId) {
+        const leftEl = document.getElementById(`msg-left-${activeId}`);
+        if (leftEl) {
+          chatEl.scrollTop = leftEl.offsetTop + offsetDiff;
+        }
+      }
+
+      setTimeout(() => {
+        isScrollingJson.current = false;
+      }, 50);
+    }
+  };
 
   const handleSendMessage = (e: React.FormEvent) => {
     e.preventDefault();
@@ -627,12 +729,13 @@ export default function OrchestratorChat({ agents }: Props) {
             <div style={{ display: 'flex', flexDirection: 'column', flex: 1, borderRight: inspectJsonMode ? '1px solid var(--border-1)' : undefined, minWidth: 0, height: '100%', minHeight: 0, overflow: 'hidden' }}>
               
               {/* Messages Feed Area */}
-              <div style={{ flex: 1, overflowY: 'auto', padding: 16, display: 'flex', flexDirection: 'column', gap: 14 }}>
+              <div ref={chatScrollContainerRef} onScroll={handleChatScroll} style={{ flex: 1, overflowY: 'auto', padding: 16, display: 'flex', flexDirection: 'column', gap: 14, position: 'relative' }}>
                 
                 {activeConv?.messages.map((m) => {
                   const isOrchestrator = m.sender === 'orchestrator';
                   return (
                     <div 
+                      id={`msg-left-${m.id}`}
                       key={m.id}
                       style={{
                         display: 'flex',
@@ -821,6 +924,7 @@ export default function OrchestratorChat({ agents }: Props) {
             {inspectJsonMode && (
               <div 
                 ref={jsonStreamRef}
+                onScroll={handleJsonScroll}
                 style={{ 
                   width: '42%', 
                   background: '#04070d', 
@@ -832,7 +936,8 @@ export default function OrchestratorChat({ agents }: Props) {
                   borderBottomRightRadius: 'var(--r-md)',
                   gap: 16,
                   height: '100%',
-                  minHeight: 0
+                  minHeight: 0,
+                  position: 'relative'
                 }}
               >
                 <div style={{ display: 'flex', alignItems: 'center', gap: 6, paddingBottom: 8, borderBottom: '1px solid rgba(255,255,255,0.08)' }}>
@@ -842,16 +947,46 @@ export default function OrchestratorChat({ agents }: Props) {
                   </span>
                 </div>
 
-                {activeConv?.messages.filter(m => m.details || (m.actionExecuted && m.actionExecuted.payload)).length === 0 ? (
+                {!activeConv || activeConv.messages.length === 0 ? (
                   <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '0.7rem', color: 'var(--text-3)' }}>
                     No JSON payloads recorded in this session.
                   </div>
                 ) : (
-                  activeConv?.messages.map((m) => {
-                    if (!m.details && (!m.actionExecuted || !m.actionExecuted.payload)) return null;
+                  activeConv.messages.map((m) => {
+                    const hasJson = m.details || (m.actionExecuted && m.actionExecuted.payload);
                     const isOrchestrator = m.sender === 'orchestrator';
+
+                    if (!hasJson) {
+                      return (
+                        <div 
+                          id={`msg-right-${m.id}`}
+                          key={`stream-placeholder-${m.id}`} 
+                          style={{ 
+                            fontSize: '0.62rem', 
+                            color: 'rgba(255,255,255,0.22)', 
+                            background: 'rgba(255,255,255,0.01)', 
+                            border: '1px dashed rgba(255,255,255,0.02)', 
+                            borderRadius: 4, 
+                            padding: '6px 10px',
+                            display: 'flex',
+                            justifyContent: 'space-between',
+                            alignItems: 'center'
+                          }}
+                        >
+                          <span style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+                            <span>💬</span>
+                            <span>Dialog: {isOrchestrator ? 'Orchestrator' : 'Agent'}</span>
+                          </span>
+                          <span style={{ fontSize: '0.55rem', color: 'var(--text-3)' }}>
+                            No JSON Telemetry
+                          </span>
+                        </div>
+                      );
+                    }
+
                     return (
                       <div 
+                        id={`msg-right-${m.id}`}
                         key={`stream-${m.id}`} 
                         style={{ 
                           fontSize: '0.66rem', 
