@@ -39,6 +39,7 @@ export default function OrchestratorChat({ agents }: Props) {
   const [conversations, setConversations] = useState<Record<string, Conversation>>({});
   const [isTyping, setIsTyping] = useState<boolean>(false);
   const [expandedDetailsId, setExpandedDetailsId] = useState<string | null>(null);
+  const [inspectJsonMode, setInspectJsonMode] = useState<boolean>(true);
   
   const chatEndRef = useRef<HTMLDivElement>(null);
 
@@ -503,7 +504,18 @@ export default function OrchestratorChat({ agents }: Props) {
                   OS: {activeConv.agentOs} · Host IP: {activeConv.agentIp}
                 </span>
               </div>
-              <div style={{ display: 'flex', gap: 6 }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 14 }}>
+                <label style={{ display: 'flex', alignItems: 'center', gap: 6, cursor: 'pointer', userSelect: 'none' }}>
+                  <input 
+                    type="checkbox" 
+                    checked={inspectJsonMode} 
+                    onChange={(e) => setInspectJsonMode(e.target.checked)} 
+                    style={{ accentColor: '#ff9900', cursor: 'pointer' }}
+                  />
+                  <span style={{ fontSize: '0.72rem', color: 'var(--text-2)', fontWeight: 500, display: 'flex', alignItems: 'center', gap: 4 }}>
+                    <Terminal size={12} style={{ color: 'var(--accent)' }} /> Inspect JSON Mode
+                  </span>
+                </label>
                 <span className="badge badge-active" style={{ fontSize: '0.62rem', background: 'rgba(34,197,94,0.15)', color: '#22c55e', border: '1px solid rgba(34,197,94,0.2)' }}>
                   Wazuh Agent Active
                 </span>
@@ -511,181 +523,270 @@ export default function OrchestratorChat({ agents }: Props) {
             </div>
           )}
 
-          {/* Messages Feed Area */}
-          <div style={{ flex: 1, overflowY: 'auto', padding: 16, display: 'flex', flexDirection: 'column', gap: 14 }}>
+          {/* Split Content Pane */}
+          <div style={{ display: 'flex', flex: 1, minHeight: 0 }}>
             
-            {activeConv?.messages.map((m) => {
-              const isOrchestrator = m.sender === 'orchestrator';
-              return (
-                <div 
-                  key={m.id}
-                  style={{
-                    display: 'flex',
-                    flexDirection: 'column',
-                    alignItems: isOrchestrator ? 'flex-end' : 'flex-start',
-                    maxWidth: '85%',
-                    alignSelf: isOrchestrator ? 'flex-end' : 'flex-start'
-                  }}
-                >
-                  {/* Sender Name & Time */}
-                  <div style={{ display: 'flex', gap: 6, fontSize: '0.65rem', color: 'var(--text-3)', marginBottom: 3, padding: '0 4px' }}>
-                    <strong>{m.senderName}</strong>
-                    <span>·</span>
-                    <span>{m.timestamp}</span>
-                  </div>
+            {/* Left Column: Timeline feed & Input */}
+            <div style={{ display: 'flex', flexDirection: 'column', flex: 1, borderRight: inspectJsonMode ? '1px solid var(--border-1)' : undefined, minWidth: 0 }}>
+              
+              {/* Messages Feed Area */}
+              <div style={{ flex: 1, overflowY: 'auto', padding: 16, display: 'flex', flexDirection: 'column', gap: 14 }}>
+                
+                {activeConv?.messages.map((m) => {
+                  const isOrchestrator = m.sender === 'orchestrator';
+                  return (
+                    <div 
+                      key={m.id}
+                      style={{
+                        display: 'flex',
+                        flexDirection: 'column',
+                        alignItems: isOrchestrator ? 'flex-end' : 'flex-start',
+                        maxWidth: '85%',
+                        alignSelf: isOrchestrator ? 'flex-end' : 'flex-start'
+                      }}
+                    >
+                      {/* Sender Name & Time */}
+                      <div style={{ display: 'flex', gap: 6, fontSize: '0.65rem', color: 'var(--text-3)', marginBottom: 3, padding: '0 4px' }}>
+                        <strong>{m.senderName}</strong>
+                        <span>·</span>
+                        <span>{m.timestamp}</span>
+                      </div>
 
-                  {/* Message Bubble */}
-                  <div
-                    style={{
-                      background: isOrchestrator ? 'rgba(255, 153, 0, 0.08)' : 'rgba(255,255,255,0.03)',
-                      border: isOrchestrator ? '1px solid rgba(255, 153, 0, 0.25)' : '1px solid var(--border-0)',
-                      borderRadius: 'var(--r-md)',
-                      padding: '10px 12px',
-                      fontSize: '0.78rem',
-                      color: 'var(--text-1)',
-                      lineHeight: 1.4,
-                      boxShadow: isOrchestrator ? '0 4px 12px rgba(255, 153, 0, 0.03)' : '0 4px 12px rgba(0,0,0,0.05)'
-                    }}
-                  >
-                    <div>{m.message}</div>
-
-                    {/* Action Executed Section (SOAR Actions) */}
-                    {m.actionExecuted && (
-                      <div 
-                        style={{ 
-                          marginTop: 8, 
-                          padding: '6px 10px', 
-                          background: 'rgba(0,0,0,0.2)', 
-                          border: '1px solid var(--border-0)', 
-                          borderRadius: 4, 
-                          fontSize: '0.7rem',
-                          display: 'flex',
-                          flexDirection: 'column',
-                          gap: 4
+                      {/* Message Bubble */}
+                      <div
+                        style={{
+                          background: isOrchestrator ? 'rgba(255, 153, 0, 0.08)' : 'rgba(255,255,255,0.03)',
+                          border: isOrchestrator ? '1px solid rgba(255, 153, 0, 0.25)' : '1px solid var(--border-0)',
+                          borderRadius: 'var(--r-md)',
+                          padding: '10px 12px',
+                          fontSize: '0.78rem',
+                          color: 'var(--text-1)',
+                          lineHeight: 1.4,
+                          boxShadow: isOrchestrator ? '0 4px 12px rgba(255, 153, 0, 0.03)' : '0 4px 12px rgba(0,0,0,0.05)'
                         }}
                       >
-                        <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                          <Zap size={11} style={{ color: 'var(--accent)' }} />
-                          <strong style={{ color: 'var(--text-0)' }}>SOAR AUTOMATION EXECUTED:</strong>
-                        </div>
-                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: 2 }}>
-                          <span style={{ color: 'var(--text-2)', fontFamily: "'IBM Plex Mono', monospace" }}>
-                            {m.actionExecuted.type} ({m.actionExecuted.target})
-                          </span>
-                          <span style={{ 
-                            color: m.actionExecuted.status === 'success' ? '#10b981' : 'var(--critical)', 
-                            fontSize: '0.62rem', fontWeight: 600, display: 'flex', alignItems: 'center', gap: 3 
-                          }}>
-                            {m.actionExecuted.status === 'success' ? <CheckCircle size={10} /> : <XCircle size={10} />}
-                            {m.actionExecuted.status.toUpperCase()}
-                          </span>
-                        </div>
-                        <div style={{ color: 'var(--text-3)', fontSize: '0.68rem', marginTop: 2 }}>
-                          {m.actionExecuted.message}
-                        </div>
-                      </div>
-                    )}
+                        <div>{m.message}</div>
 
-                    {/* Expandable JSON details */}
-                    {m.details && (
-                      <div style={{ marginTop: 8 }}>
-                        <button
-                          onClick={() => setExpandedDetailsId(expandedDetailsId === m.id ? null : m.id)}
-                          style={{
-                            background: 'rgba(255,255,255,0.04)',
-                            border: '1px solid var(--border-0)',
-                            color: 'var(--text-2)',
-                            fontSize: '0.62rem',
-                            padding: '2px 6px',
-                            borderRadius: 3,
-                            cursor: 'pointer',
-                            display: 'flex',
-                            alignItems: 'center',
-                            gap: 4
-                          }}
-                        >
-                          <Terminal size={10} />
-                          {expandedDetailsId === m.id ? 'Hide payload details' : 'Show payload details (JSON)'}
-                        </button>
-                        
-                        {expandedDetailsId === m.id && (
-                          <pre 
+                        {/* Action Executed Section (SOAR Actions) */}
+                        {m.actionExecuted && (
+                          <div 
                             style={{ 
-                              marginTop: 6, 
-                              background: '#090d16', 
-                              border: '1px solid rgba(255,255,255,0.05)', 
-                              padding: 8, 
+                              marginTop: 8, 
+                              padding: '6px 10px', 
+                              background: 'rgba(0,0,0,0.2)', 
+                              border: '1px solid var(--border-0)', 
                               borderRadius: 4, 
-                              fontSize: '0.68rem', 
-                              fontFamily: "'IBM Plex Mono', monospace", 
-                              color: '#38bdf8',
-                              overflowX: 'auto',
-                              maxHeight: 180,
-                              lineHeight: 1.2
+                              fontSize: '0.7rem',
+                              display: 'flex',
+                              flexDirection: 'column',
+                              gap: 4
                             }}
                           >
+                            <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                              <Zap size={11} style={{ color: 'var(--accent)' }} />
+                              <strong style={{ color: 'var(--text-0)' }}>SOAR AUTOMATION EXECUTED:</strong>
+                            </div>
+                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: 2 }}>
+                              <span style={{ color: 'var(--text-2)', fontFamily: "'IBM Plex Mono', monospace" }}>
+                                {m.actionExecuted.type} ({m.actionExecuted.target})
+                              </span>
+                              <span style={{ 
+                                color: m.actionExecuted.status === 'success' ? '#10b981' : 'var(--critical)', 
+                                fontSize: '0.62rem', fontWeight: 600, display: 'flex', alignItems: 'center', gap: 3 
+                              }}>
+                                {m.actionExecuted.status === 'success' ? <CheckCircle size={10} /> : <XCircle size={10} />}
+                                {m.actionExecuted.status.toUpperCase()}
+                              </span>
+                            </div>
+                            <div style={{ color: 'var(--text-3)', fontSize: '0.68rem', marginTop: 2 }}>
+                              {m.actionExecuted.message}
+                            </div>
+                          </div>
+                        )}
+
+                        {/* Expandable JSON details */}
+                        {m.details && !inspectJsonMode && (
+                          <div style={{ marginTop: 8 }}>
+                            <button
+                              type="button"
+                              onClick={() => setExpandedDetailsId(expandedDetailsId === m.id ? null : m.id)}
+                              style={{
+                                background: 'rgba(255,255,255,0.04)',
+                                border: '1px solid var(--border-0)',
+                                color: 'var(--text-2)',
+                                fontSize: '0.62rem',
+                                padding: '2px 6px',
+                                borderRadius: 3,
+                                cursor: 'pointer',
+                                display: 'flex',
+                                alignItems: 'center',
+                                gap: 4
+                              }}
+                            >
+                              <Terminal size={10} />
+                              {expandedDetailsId === m.id ? 'Hide payload details' : 'Show payload details (JSON)'}
+                            </button>
+                            
+                            {expandedDetailsId === m.id && (
+                              <pre 
+                                style={{ 
+                                  marginTop: 6, 
+                                  background: '#090d16', 
+                                  border: '1px solid rgba(255,255,255,0.05)', 
+                                  padding: 8, 
+                                  borderRadius: 4, 
+                                  fontSize: '0.68rem', 
+                                  fontFamily: "'IBM Plex Mono', monospace", 
+                                  color: '#38bdf8',
+                                  overflowX: 'auto',
+                                  maxHeight: 180,
+                                  lineHeight: 1.2
+                                }}
+                              >
+                                {m.details}
+                              </pre>
+                            )}
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  );
+                })}
+
+                {isTyping && (
+                  <div style={{ alignSelf: 'flex-end', display: 'flex', flexDirection: 'column', alignItems: 'flex-end' }}>
+                    <div style={{ fontSize: '0.65rem', color: 'var(--text-3)', marginBottom: 3 }}>
+                      L2 SOAR Orchestrator AI is typing...
+                    </div>
+                    <div style={{ background: 'rgba(255, 153, 0, 0.05)', border: '1px solid rgba(255, 153, 0, 0.15)', borderRadius: 'var(--r-md)', padding: '8px 12px', fontSize: '0.78rem' }}>
+                      <span className="dot-blink" style={{ display: 'inline-block', width: 6, height: 6, borderRadius: '50%', background: 'var(--accent)', marginRight: 3 }} />
+                      <span className="dot-blink" style={{ display: 'inline-block', width: 6, height: 6, borderRadius: '50%', background: 'var(--accent)', marginRight: 3, animationDelay: '0.2s' }} />
+                      <span className="dot-blink" style={{ display: 'inline-block', width: 6, height: 6, borderRadius: '50%', background: 'var(--accent)', animationDelay: '0.4s' }} />
+                    </div>
+                  </div>
+                )}
+
+                <div ref={chatEndRef} />
+              </div>
+
+              {/* Chat Console Input Bar */}
+              <form onSubmit={handleSendMessage} style={{ padding: 12, borderTop: '1px solid var(--border-0)', display: 'flex', gap: 8, background: 'rgba(0,0,0,0.15)' }}>
+                <input
+                  type="text"
+                  value={userInput}
+                  onChange={(e) => setUserInput(e.target.value)}
+                  placeholder={`Ask Orchestrator AI or send shell command to ${activeConv?.agentName}...`}
+                  style={{
+                    flex: 1,
+                    background: 'var(--bg-surface)',
+                    border: '1px solid var(--border-1)',
+                    borderRadius: 'var(--r-xs)',
+                    padding: '6px 12px',
+                    fontSize: '0.8rem',
+                    color: 'var(--text-1)'
+                  }}
+                />
+                <button 
+                  type="submit" 
+                  className="btn btn-primary" 
+                  style={{ 
+                    background: '#ff9900', 
+                    borderColor: '#ff9900', 
+                    padding: '0 12px', 
+                    height: 32, 
+                    display: 'flex', 
+                    alignItems: 'center', 
+                    justifyContent: 'center', 
+                    gap: 6,
+                    fontSize: '0.78rem' 
+                  }}
+                >
+                  <Send size={12} /> Send
+                </button>
+              </form>
+
+            </div>
+
+            {/* Right Column: Live JSON Inspector Stream */}
+            {inspectJsonMode && (
+              <div 
+                style={{ 
+                  width: '42%', 
+                  background: '#04070d', 
+                  display: 'flex', 
+                  flexDirection: 'column', 
+                  overflowY: 'auto', 
+                  padding: 14, 
+                  fontFamily: "'IBM Plex Mono', monospace", 
+                  borderBottomRightRadius: 'var(--r-md)',
+                  gap: 16
+                }}
+              >
+                <div style={{ display: 'flex', alignItems: 'center', gap: 6, paddingBottom: 8, borderBottom: '1px solid rgba(255,255,255,0.08)' }}>
+                  <Terminal size={12} style={{ color: 'var(--accent)' }} />
+                  <span style={{ fontSize: '0.74rem', fontWeight: 600, color: 'var(--text-0)', letterSpacing: '0.04em' }}>
+                    JSON TELEMETRY STREAM
+                  </span>
+                </div>
+
+                {activeConv?.messages.filter(m => m.details || (m.actionExecuted && m.actionExecuted.payload)).length === 0 ? (
+                  <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '0.7rem', color: 'var(--text-3)' }}>
+                    No JSON payloads recorded in this session.
+                  </div>
+                ) : (
+                  activeConv?.messages.map((m) => {
+                    if (!m.details && (!m.actionExecuted || !m.actionExecuted.payload)) return null;
+                    const isOrchestrator = m.sender === 'orchestrator';
+                    return (
+                      <div 
+                        key={`stream-${m.id}`} 
+                        style={{ 
+                          fontSize: '0.66rem', 
+                          background: 'rgba(255,255,255,0.01)', 
+                          border: '1px solid rgba(255,255,255,0.04)', 
+                          borderRadius: 4, 
+                          padding: 10,
+                          display: 'flex',
+                          flexDirection: 'column',
+                          gap: 6
+                        }}
+                      >
+                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderBottom: '1px dashed rgba(255,255,255,0.05)', paddingBottom: 4 }}>
+                          <span style={{ fontWeight: 600, color: isOrchestrator ? '#f59e0b' : '#38bdf8' }}>
+                            {isOrchestrator ? '◀ ORCHESTRATOR RESPONSE' : '▶ AGENT INBOUND PUSH'}
+                          </span>
+                          <span style={{ color: 'var(--text-3)', fontSize: '0.58rem' }}>{m.timestamp}</span>
+                        </div>
+
+                        <div style={{ color: 'var(--text-2)', fontSize: '0.62rem', background: 'rgba(0,0,0,0.3)', padding: '2px 6px', borderRadius: 2 }}>
+                          {isOrchestrator 
+                            ? `AWS_ACTION: ${m.actionExecuted?.type || 'AI_TRIAGE_DECISION'}`
+                            : `METHOD: POST /api/telemetry`
+                          }
+                        </div>
+
+                        {m.details && (
+                          <pre style={{ margin: 0, color: '#38bdf8', overflowX: 'auto', whiteSpace: 'pre', lineHeight: 1.25 }}>
                             {m.details}
                           </pre>
                         )}
-                      </div>
-                    )}
-                  </div>
-                </div>
-              );
-            })}
 
-            {isTyping && (
-              <div style={{ alignSelf: 'flex-end', display: 'flex', flexDirection: 'column', alignItems: 'flex-end' }}>
-                <div style={{ fontSize: '0.65rem', color: 'var(--text-3)', marginBottom: 3 }}>
-                  L2 SOAR Orchestrator AI is typing...
-                </div>
-                <div style={{ background: 'rgba(255, 153, 0, 0.05)', border: '1px solid rgba(255, 153, 0, 0.15)', borderRadius: 'var(--r-md)', padding: '8px 12px', fontSize: '0.78rem' }}>
-                  <span className="dot-blink" style={{ display: 'inline-block', width: 6, height: 6, borderRadius: '50%', background: 'var(--accent)', marginRight: 3 }} />
-                  <span className="dot-blink" style={{ display: 'inline-block', width: 6, height: 6, borderRadius: '50%', background: 'var(--accent)', marginRight: 3, animationDelay: '0.2s' }} />
-                  <span className="dot-blink" style={{ display: 'inline-block', width: 6, height: 6, borderRadius: '50%', background: 'var(--accent)', animationDelay: '0.4s' }} />
-                </div>
+                        {m.actionExecuted?.payload && (
+                          <div style={{ marginTop: 4 }}>
+                            <div style={{ fontSize: '0.58rem', color: 'var(--text-3)', marginBottom: 2 }}>Action Payload:</div>
+                            <pre style={{ margin: 0, color: '#f59e0b', overflowX: 'auto', whiteSpace: 'pre', lineHeight: 1.25 }}>
+                              {m.actionExecuted.payload}
+                            </pre>
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })
+                )}
               </div>
             )}
 
-            <div ref={chatEndRef} />
           </div>
-
-          {/* Chat Console Input Bar */}
-          <form onSubmit={handleSendMessage} style={{ padding: 12, borderTop: '1px solid var(--border-0)', display: 'flex', gap: 8, background: 'rgba(0,0,0,0.15)' }}>
-            <input
-              type="text"
-              value={userInput}
-              onChange={(e) => setUserInput(e.target.value)}
-              placeholder={`Ask Orchestrator AI or send shell command to ${activeConv?.agentName}...`}
-              style={{
-                flex: 1,
-                background: 'var(--bg-surface)',
-                border: '1px solid var(--border-1)',
-                borderRadius: 'var(--r-xs)',
-                padding: '6px 12px',
-                fontSize: '0.8rem',
-                color: 'var(--text-1)'
-              }}
-            />
-            <button 
-              type="submit" 
-              className="btn btn-primary" 
-              style={{ 
-                background: '#ff9900', 
-                borderColor: '#ff9900', 
-                padding: '0 12px', 
-                height: 32, 
-                display: 'flex', 
-                alignItems: 'center', 
-                justifyContent: 'center', 
-                gap: 6,
-                fontSize: '0.78rem' 
-              }}
-            >
-              <Send size={12} /> Send
-            </button>
-          </form>
-
         </div>
       </div>
     </div>
