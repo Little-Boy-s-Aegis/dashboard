@@ -87,7 +87,7 @@ func IsSQLInjectionText(parts ...string) bool {
 
 func IsPersistentSecurityActionType(actionType string) bool {
 	switch strings.TrimSpace(actionType) {
-	case "Block IP", "Unblock IP", "Unblock All IPs", "Isolate Host", "Terminate Process", "Revoke Credentials", "Force Logout":
+	case "Block IP", "Unblock IP", "Unblock All IPs", "Isolate Host", "Terminate Process", "Revoke Credentials", "Force Logout", "Resolve Alert", "Assign Alert", "Bulk Resolve", "Bulk Assign":
 		return true
 	default:
 		return false

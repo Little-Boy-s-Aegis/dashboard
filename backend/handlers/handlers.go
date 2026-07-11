@@ -463,6 +463,14 @@ func TriggerSimulation(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// SOC role restriction: cannot trigger simulation
+	if _, sessionExists := resolveSessionUsername(r); sessionExists {
+		writeJSON(w, http.StatusForbidden, map[string]string{
+			"error": "Forbidden: The SOC role is restricted to read and Ban/Unban actions. Triggering simulations is denied.",
+		})
+		return
+	}
+
 	var req struct {
 		AgentID string `json:"agentId"`
 		Type    string `json:"type"` // ransomware, bruteforce, malware
@@ -522,8 +530,6 @@ func ResolveAlert(w http.ResponseWriter, r *http.Request) {
 	alertID := parts[3]
 
 	store.DB.Mu.Lock()
-	defer store.DB.Mu.Unlock()
-
 	var alert *models.Alert
 	for _, alt := range store.DB.Alerts {
 		if alt.ID == alertID {
@@ -533,6 +539,7 @@ func ResolveAlert(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if alert == nil {
+		store.DB.Mu.Unlock()
 		writeJSON(w, http.StatusNotFound, map[string]string{"error": "Alert not found"})
 		return
 	}
@@ -556,6 +563,15 @@ func ResolveAlert(w http.ResponseWriter, r *http.Request) {
 			store.DB.SaveAgent(agent)
 		}
 	}
+	store.DB.Mu.Unlock()
+
+	// Log SOC action
+	username, sessionExists := resolveSessionUsername(r)
+	actor := "SOC (admin)"
+	if sessionExists {
+		actor = fmt.Sprintf("SOC (%s)", username)
+	}
+	LogSOCAction(actor, "Resolve Alert", alert.ID, "success", fmt.Sprintf("Alert resolved: '%s'", alert.Title))
 
 	writeJSON(w, http.StatusOK, map[string]interface{}{
 		"message": "Alert marked as resolved",
@@ -587,8 +603,6 @@ func AssignAlert(w http.ResponseWriter, r *http.Request) {
 	}
 
 	store.DB.Mu.Lock()
-	defer store.DB.Mu.Unlock()
-
 	var alert *models.Alert
 	for _, alt := range store.DB.Alerts {
 		if alt.ID == alertID {
@@ -598,6 +612,7 @@ func AssignAlert(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if alert == nil {
+		store.DB.Mu.Unlock()
 		writeJSON(w, http.StatusNotFound, map[string]string{"error": "Alert not found"})
 		return
 	}
@@ -607,6 +622,19 @@ func AssignAlert(w http.ResponseWriter, r *http.Request) {
 		alert.Status = "investigating"
 	}
 	store.DB.SaveAlert(alert)
+	store.DB.Mu.Unlock()
+
+	// Log SOC action
+	username, sessionExists := resolveSessionUsername(r)
+	actor := "SOC (admin)"
+	if sessionExists {
+		actor = fmt.Sprintf("SOC (%s)", username)
+	}
+	msg := fmt.Sprintf("Alert assigned to %s: '%s'", req.Assignee, alert.Title)
+	if req.Assignee == "" {
+		msg = fmt.Sprintf("Alert unassigned: '%s'", alert.Title)
+	}
+	LogSOCAction(actor, "Assign Alert", alert.ID, "success", msg)
 
 	writeJSON(w, http.StatusOK, map[string]interface{}{
 		"message": "Alert assignee updated",
@@ -631,10 +659,9 @@ func BulkResolveAlerts(w http.ResponseWriter, r *http.Request) {
 	}
 
 	store.DB.Mu.Lock()
-	defer store.DB.Mu.Unlock()
-
 	resolvedCount := 0
 	affectedAgents := make(map[string]bool)
+	resolvedTitles := []string{}
 
 	for _, id := range req.IDs {
 		for _, alt := range store.DB.Alerts {
@@ -643,6 +670,7 @@ func BulkResolveAlerts(w http.ResponseWriter, r *http.Request) {
 				store.DB.SaveAlert(alt)
 				affectedAgents[alt.AgentID] = true
 				resolvedCount++
+				resolvedTitles = append(resolvedTitles, alt.Title)
 				break
 			}
 		}
@@ -664,6 +692,19 @@ func BulkResolveAlerts(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 	}
+	store.DB.Mu.Unlock()
+
+	// Log SOC action
+	username, sessionExists := resolveSessionUsername(r)
+	actor := "SOC (admin)"
+	if sessionExists {
+		actor = fmt.Sprintf("SOC (%s)", username)
+	}
+	msg := fmt.Sprintf("Bulk resolved %d alerts: %s", resolvedCount, strings.Join(resolvedTitles, ", "))
+	if len(msg) > 500 {
+		msg = msg[:497] + "..."
+	}
+	LogSOCAction(actor, "Bulk Resolve", strings.Join(req.IDs, ","), "success", msg)
 
 	writeJSON(w, http.StatusOK, map[string]interface{}{
 		"message":       "Alerts resolved in bulk",
@@ -689,9 +730,8 @@ func BulkAssignAlerts(w http.ResponseWriter, r *http.Request) {
 	}
 
 	store.DB.Mu.Lock()
-	defer store.DB.Mu.Unlock()
-
 	assignedCount := 0
+	assignedTitles := []string{}
 	for _, id := range req.IDs {
 		for _, alt := range store.DB.Alerts {
 			if alt.ID == id {
@@ -701,10 +741,24 @@ func BulkAssignAlerts(w http.ResponseWriter, r *http.Request) {
 				}
 				store.DB.SaveAlert(alt)
 				assignedCount++
+				assignedTitles = append(assignedTitles, alt.Title)
 				break
 			}
 		}
 	}
+	store.DB.Mu.Unlock()
+
+	// Log SOC action
+	username, sessionExists := resolveSessionUsername(r)
+	actor := "SOC (admin)"
+	if sessionExists {
+		actor = fmt.Sprintf("SOC (%s)", username)
+	}
+	msg := fmt.Sprintf("Bulk assigned %d alerts to %s: %s", assignedCount, req.Assignee, strings.Join(assignedTitles, ", "))
+	if len(msg) > 500 {
+		msg = msg[:497] + "..."
+	}
+	LogSOCAction(actor, "Bulk Assign", strings.Join(req.IDs, ","), "success", msg)
 
 	writeJSON(w, http.StatusOK, map[string]interface{}{
 		"message":       "Alerts assigned in bulk",
@@ -725,7 +779,11 @@ func GetActions(w http.ResponseWriter, r *http.Request) {
 				'Isolate Host',
 				'Terminate Process',
 				'Revoke Credentials',
-				'Force Logout'
+				'Force Logout',
+				'Resolve Alert',
+				'Assign Alert',
+				'Bulk Resolve',
+				'Bulk Assign'
 			)
 			ORDER BY timestamp DESC, id DESC
 			LIMIT 500
@@ -806,37 +864,7 @@ func PerformAction(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Resolve the actual operator from cookie/bearer token to prevent spoofing
-	cookie, err := r.Cookie("session_token")
-	var sessionToken string
-	if err == nil {
-		sessionToken = cookie.Value
-	} else {
-		authHeader := r.Header.Get("Authorization")
-		if strings.HasPrefix(authHeader, "Bearer ") {
-			sessionToken = strings.TrimPrefix(authHeader, "Bearer ")
-		}
-	}
-
-	var sessionUsername string
-	var sessionExists bool
-
-	if sessionToken != "" {
-		if store.UsePostgres {
-			_, dbUsername, _, dbExpiresAt, dbErr := store.GetSQLSession(sessionToken)
-			if dbErr == nil && time.Now().Before(dbExpiresAt) {
-				sessionUsername = dbUsername
-				sessionExists = true
-			}
-		} else {
-			authMu.RLock()
-			session, ok := sessionStore[sessionToken]
-			if ok && time.Now().Before(session.ExpiresAt) {
-				sessionUsername = session.Username
-				sessionExists = true
-			}
-			authMu.RUnlock()
-		}
-	}
+	sessionUsername, sessionExists := resolveSessionUsername(r)
 
 	var resolvedActor string
 	if sessionExists {
@@ -846,6 +874,16 @@ func PerformAction(w http.ResponseWriter, r *http.Request) {
 		resolvedActor = req.Actor
 		if resolvedActor == "" {
 			resolvedActor = "System"
+		}
+	}
+
+	// SOC role restriction: only read and Ban/Unban allowed. Reject host/agent execution commands.
+	if req.ActionType != "Block IP" && req.ActionType != "Unblock IP" && req.ActionType != "Unblock All IPs" {
+		if sessionExists {
+			writeJSON(w, http.StatusForbidden, map[string]string{
+				"error": fmt.Sprintf("Forbidden: The SOC role is restricted to read and Ban/Unban actions. Action '%s' is denied to prevent unauthorized system modifications.", req.ActionType),
+			})
+			return
 		}
 	}
 
@@ -1632,6 +1670,14 @@ func GetSettings(w http.ResponseWriter, r *http.Request) {
 
 // POST /api/settings
 func SaveSettings(w http.ResponseWriter, r *http.Request) {
+	// SOC role restriction: cannot save settings
+	if _, sessionExists := resolveSessionUsername(r); sessionExists {
+		writeJSON(w, http.StatusForbidden, map[string]string{
+			"error": "Forbidden: The SOC role is restricted to read and Ban/Unban actions. Modifying settings is denied.",
+		})
+		return
+	}
+
 	var req struct {
 		AutopilotEnabled bool `json:"soc_autopilot_enabled"`
 	}
@@ -1688,4 +1734,69 @@ func GetBannedIPs(w http.ResponseWriter, r *http.Request) {
 	}
 
 	writeJSON(w, http.StatusOK, list)
+}
+
+// Helper to resolve session username and check if request is authenticated
+func resolveSessionUsername(r *http.Request) (string, bool) {
+	cookie, err := r.Cookie("session_token")
+	var sessionToken string
+	if err == nil {
+		sessionToken = cookie.Value
+	} else {
+		authHeader := r.Header.Get("Authorization")
+		if strings.HasPrefix(authHeader, "Bearer ") {
+			sessionToken = strings.TrimPrefix(authHeader, "Bearer ")
+		}
+	}
+
+	if sessionToken == "" {
+		return "", false
+	}
+
+	if store.UsePostgres {
+		_, dbUsername, _, dbExpiresAt, dbErr := store.GetSQLSession(sessionToken)
+		if dbErr == nil && time.Now().Before(dbExpiresAt) {
+			return dbUsername, true
+		}
+	} else {
+		authMu.RLock()
+		session, ok := sessionStore[sessionToken]
+		authMu.RUnlock()
+		if ok && time.Now().Before(session.ExpiresAt) {
+			return session.Username, true
+		}
+	}
+	return "", false
+}
+
+// LogSOCAction logs SOC actions to PostgreSQL and in-memory action logs
+func LogSOCAction(actor string, actionType string, target string, status string, message string) {
+	store.DB.Mu.Lock()
+	store.DB.ActionCounter++
+	actionID := fmt.Sprintf("act-%04d", store.DB.ActionCounter)
+	store.DB.Mu.Unlock()
+
+	actionLog := &models.ActionLog{
+		ID:         actionID,
+		Timestamp:  time.Now(),
+		Actor:      actor,
+		ActionType: actionType,
+		Target:     target,
+		Status:     status,
+		Message:    message,
+	}
+
+	if store.UsePostgres {
+		_, dbErr := store.SQL.Exec(`
+			INSERT INTO action_logs (id, timestamp, actor, action_type, target, status, message)
+			VALUES ($1, $2, $3, $4, $5, $6, $7)
+		`, actionLog.ID, actionLog.Timestamp, actionLog.Actor, actionLog.ActionType, actionLog.Target, actionLog.Status, actionLog.Message)
+		if dbErr != nil {
+			log.Printf("[DATABASE ERROR] Failed to save SOC action log: %v", dbErr)
+		}
+	}
+
+	store.DB.Mu.Lock()
+	store.DB.ActionLogs = append(store.DB.ActionLogs, actionLog)
+	store.DB.Mu.Unlock()
 }

@@ -337,7 +337,11 @@ func pruneOperationalData() {
 			'Isolate Host',
 			'Terminate Process',
 			'Revoke Credentials',
-			'Force Logout'
+			'Force Logout',
+			'Resolve Alert',
+			'Assign Alert',
+			'Bulk Resolve',
+			'Bulk Assign'
 		)
 	`); err != nil {
 		log.Printf("[DATABASE WARNING] Failed to prune non-security action logs: %v", err)

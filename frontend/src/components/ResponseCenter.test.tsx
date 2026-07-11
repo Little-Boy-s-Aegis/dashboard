@@ -81,8 +81,10 @@ describe('ResponseCenter Component', () => {
     render(<ResponseCenter {...mockProps} />);
 
     const selectActions = screen.getAllByRole('combobox') as HTMLSelectElement[];
-    const selectAction = selectActions.find(el => el.value === 'Isolate Host')!;
-    fireEvent.change(selectAction, { target: { value: 'Block IP' } });
+    const selectAction = selectActions.find(el => el.value === 'Isolate Host' || el.value === 'Block IP')!;
+    if (selectAction.value === 'Isolate Host') {
+      fireEvent.change(selectAction, { target: { value: 'Block IP' } });
+    }
 
     const inputTarget = screen.getByPlaceholderText(/e.g. 198.51.100.222/i) as HTMLInputElement;
 
@@ -109,8 +111,10 @@ describe('ResponseCenter Component', () => {
     render(<ResponseCenter {...mockProps} />);
 
     const selectActions = screen.getAllByRole('combobox') as HTMLSelectElement[];
-    const selectAction = selectActions.find(el => el.value === 'Isolate Host')!;
-    fireEvent.change(selectAction, { target: { value: 'Block IP' } });
+    const selectAction = selectActions.find(el => el.value === 'Isolate Host' || el.value === 'Block IP')!;
+    if (selectAction.value === 'Isolate Host') {
+      fireEvent.change(selectAction, { target: { value: 'Block IP' } });
+    }
 
     const submitBtn = screen.getByRole('button', { name: /Deploy Mitigation/i });
     fireEvent.click(submitBtn);
@@ -130,8 +134,10 @@ describe('ResponseCenter Component', () => {
 
     // Change action type to Block IP
     const selectActions = screen.getAllByRole('combobox') as HTMLSelectElement[];
-    const selectAction = selectActions.find(el => el.value === 'Isolate Host')!;
-    fireEvent.change(selectAction, { target: { value: 'Block IP' } });
+    const selectAction = selectActions.find(el => el.value === 'Isolate Host' || el.value === 'Block IP')!;
+    if (selectAction.value === 'Isolate Host') {
+      fireEvent.change(selectAction, { target: { value: 'Block IP' } });
+    }
 
     const inputTarget = screen.getByPlaceholderText(/e.g. 198.51.100.222/i) as HTMLInputElement;
     fireEvent.change(inputTarget, { target: { value: '192.168.1.5' } });
@@ -158,8 +164,10 @@ describe('ResponseCenter Component', () => {
 
     // Change action type to Block IP
     const selectActions = screen.getAllByRole('combobox') as HTMLSelectElement[];
-    const selectAction = selectActions.find(el => el.value === 'Isolate Host')!;
-    fireEvent.change(selectAction, { target: { value: 'Block IP' } });
+    const selectAction = selectActions.find(el => el.value === 'Isolate Host' || el.value === 'Block IP')!;
+    if (selectAction.value === 'Isolate Host') {
+      fireEvent.change(selectAction, { target: { value: 'Block IP' } });
+    }
 
     const inputTarget = screen.getByPlaceholderText(/e.g. 198.51.100.222/i) as HTMLInputElement;
     fireEvent.change(inputTarget, { target: { value: '192.168.1.5' } });
@@ -181,8 +189,10 @@ describe('ResponseCenter Component', () => {
 
     // Change action type to Block IP
     const selectActions = screen.getAllByRole('combobox') as HTMLSelectElement[];
-    const selectAction = selectActions.find(el => el.value === 'Isolate Host')!;
-    fireEvent.change(selectAction, { target: { value: 'Block IP' } });
+    const selectAction = selectActions.find(el => el.value === 'Isolate Host' || el.value === 'Block IP')!;
+    if (selectAction.value === 'Isolate Host') {
+      fireEvent.change(selectAction, { target: { value: 'Block IP' } });
+    }
 
     const inputTarget = screen.getByPlaceholderText(/e.g. 198.51.100.222/i) as HTMLInputElement;
     fireEvent.change(inputTarget, { target: { value: '192.168.1.5' } });
