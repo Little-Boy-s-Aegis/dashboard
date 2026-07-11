@@ -15,8 +15,9 @@ interface Props {
 const ACTION_TYPES = ['Isolate Host', 'Block IP', 'Unblock IP', 'Terminate Process', 'Revoke Credentials'];
 
 export default function ResponseCenter({ agents, alerts, actions, timeRange, setTimeRange, onRefresh, currentUser }: Props) {
+  const allowedActionTypes = currentUser ? ['Block IP', 'Unblock IP'] : ACTION_TYPES;
   const [actor, setActor] = useState(currentUser ? `SOC (${currentUser})` : 'SOC (Sarah Connor)');
-  const [actionType, setActionType] = useState(ACTION_TYPES[0]);
+  const [actionType, setActionType] = useState(allowedActionTypes[0]);
   const [target, setTarget] = useState('');
   const [message, setMessage] = useState('');
   const [submitting, setSubmitting] = useState(false);
@@ -26,6 +27,9 @@ export default function ResponseCenter({ agents, alerts, actions, timeRange, set
   useEffect(() => {
     if (currentUser) {
       setActor(`SOC (${currentUser})`);
+      setActionType('Block IP');
+    } else {
+      setActionType('Isolate Host');
     }
   }, [currentUser]);
 
@@ -46,11 +50,8 @@ export default function ResponseCenter({ agents, alerts, actions, timeRange, set
 
   const filteredAlerts = alerts.filter(a => filterByTimeRange(a.timestamp));
 
-  // Get Top 3 Agents (A1, A2, A3) details
-  const a1 = agents.find(a => a.id === 'agent-01') || agents[0];
-  const a2 = agents.find(a => a.id === 'agent-02') || agents[1];
-  const a3 = agents.find(a => a.id === 'agent-03') || agents[2];
-  const targetAgents = [a1, a2, a3].filter(Boolean);
+  // Get all target agents dynamically
+  const targetAgents = agents;
 
   const getHighestSeverityForAgent = (agentId: string) => {
     const agentAlerts = filteredAlerts.filter(a => a.agentId === agentId && a.status !== 'resolved');
@@ -207,7 +208,7 @@ export default function ResponseCenter({ agents, alerts, actions, timeRange, set
               <div style={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
                 <label style={{ fontSize: '0.66rem', color: 'var(--text-3)', fontWeight: 600, textTransform: 'uppercase' }}>Action Type</label>
                 <select className="select-input" value={actionType} onChange={e => setActionType(e.target.value)}>
-                  {ACTION_TYPES.map(t => <option key={t} value={t}>{t}</option>)}
+                  {allowedActionTypes.map(t => <option key={t} value={t}>{t}</option>)}
                 </select>
               </div>
             </div>

@@ -286,8 +286,8 @@ export default function SoarPerformanceDashboard({ actions, alerts }: Props) {
             </h3>
             <p style={{ fontSize: '0.74rem', color: 'var(--text-3)', margin: '2px 0 0' }}>
               {autopilotEnabled 
-                ? "ON: AI has Full Control to execute automated playbooks immediately (Block IP, Quarantine Host, Force Logout)." 
-                : "OFF: AI operates in Suggest-Only Mode. Recommended remediation actions require manual approval."}
+                ? "ON: AI has Full Control to make decisions and execute containment actions (e.g. Block IP) automatically." 
+                : "OFF: AI automatically generates decisions, correlates findings, and posts the full AI analysis immediately. Remediations are auto-suggested on the dashboard for one-click manual approval."}
             </p>
           </div>
         </div>

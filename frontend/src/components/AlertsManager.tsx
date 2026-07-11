@@ -6,6 +6,11 @@ const getAttackerIp = (rawLog?: string): string => {
   if (!rawLog) return 'N/A';
   try {
     const parsed = JSON.parse(rawLog);
+    const l2Ip = parsed.verified_case?.entities?.ips?.[0] || 
+                 parsed.verifiedCase?.entities?.ips?.[0];
+    if (l2Ip && typeof l2Ip === 'string') {
+      return l2Ip;
+    }
     return parsed.clientIp || parsed.client_ip || parsed.sourceIp || parsed.source_ip || parsed.srcIp || parsed.ip || 'N/A';
   } catch {
     return 'N/A';
@@ -19,8 +24,6 @@ interface Props {
   onClearMitreFilter?: () => void;
 }
 
-const ANALYSTS = ['Alex Miller', 'Sarah Connor', 'John Doe', 'AI Copilot'];
-
 export default function AlertsManager({ alerts, onRefresh, initialMitreFilter, onClearMitreFilter }: Props) {
   const [selectedAlertId, setSelectedAlertId] = useState<string | null>(null);
   const [severityFilter, setSeverityFilter] = useState('');
@@ -32,6 +35,7 @@ export default function AlertsManager({ alerts, onRefresh, initialMitreFilter, o
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [bannedIps, setBannedIps] = useState<string[]>([]);
   const [banningIp, setBanningIp] = useState<string | null>(null);
+  const [analysts, setAnalysts] = useState<string[]>(['admin', 'sarah', 'alex', 'AI Copilot']);
 
   const fetchBannedIps = async () => {
     try {
@@ -46,8 +50,22 @@ export default function AlertsManager({ alerts, onRefresh, initialMitreFilter, o
     }
   };
 
+  const fetchAnalysts = async () => {
+    try {
+      const res = await fetch('/api/operators');
+      if (res.ok) {
+        const data = await res.json();
+        const names = data.map((op: any) => op.username);
+        setAnalysts(names);
+      }
+    } catch (e) {
+      console.error('Failed to fetch analysts:', e);
+    }
+  };
+
   useEffect(() => {
     fetchBannedIps();
+    fetchAnalysts();
   }, []);
 
   const handleBanIp = async (alert: Alert, e: React.MouseEvent) => {
@@ -104,6 +122,12 @@ export default function AlertsManager({ alerts, onRefresh, initialMitreFilter, o
   useEffect(() => {
     if (initialMitreFilter) { setSearchQuery(initialMitreFilter); onClearMitreFilter?.(); }
   }, [initialMitreFilter, onClearMitreFilter]);
+
+  useEffect(() => {
+    if (selectedAlertId && !aiAnalysis[selectedAlertId]) {
+      handleAI(selectedAlertId);
+    }
+  }, [selectedAlertId]);
 
   const filtered = alerts.filter(a => {
     if (severityFilter && a.severity !== severityFilter) return false;
@@ -211,7 +235,7 @@ export default function AlertsManager({ alerts, onRefresh, initialMitreFilter, o
             <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
               <select onChange={e => { if (e.target.value) { bulkAssign(e.target.value); e.target.value = ''; } }} className="select-input" style={{ padding: '3px 6px', fontSize: '0.72rem' }}>
                 <option value="">Assign...</option>
-                {ANALYSTS.map(n => <option key={n} value={n}>{n}</option>)}
+                {analysts.map(n => <option key={n} value={n}>{n}</option>)}
               </select>
               <button className="btn btn-primary" onClick={bulkResolve} style={{ padding: '3px 10px', fontSize: '0.72rem' }}><CheckCircle size={11} /> Resolve</button>
               <button className="btn btn-outline" onClick={() => setSelectedIds(new Set())} style={{ padding: '3px 8px', fontSize: '0.72rem' }}>Cancel</button>
@@ -266,7 +290,7 @@ export default function AlertsManager({ alerts, onRefresh, initialMitreFilter, o
                       <select value={a.assignee || ''} onChange={e => handleAssign(a.id, e.target.value)} className="select-input"
                         style={{ background: 'transparent', border: '1px solid var(--border-0)', color: a.assignee ? 'var(--accent-dim)' : 'var(--text-3)', fontWeight: a.assignee ? 600 : 400, padding: '2px 4px', fontSize: '0.7rem', width: '100%' }}>
                         <option value="">—</option>
-                        {ANALYSTS.map(n => <option key={n} value={n}>{n}</option>)}
+                        {analysts.map(n => <option key={n} value={n}>{n}</option>)}
                       </select>
                     </td>
                     <td><span className={`badge ${a.status === 'resolved' ? 'badge-info' : a.status === 'investigating' ? 'badge-medium' : 'badge-neutral'}`}>{a.status}</span></td>
@@ -358,7 +382,7 @@ export default function AlertsManager({ alerts, onRefresh, initialMitreFilter, o
                 <select value={selected.assignee || ''} onChange={e => handleAssign(selected.id, e.target.value)} className="select-input"
                   style={{ marginLeft: 4, padding: '2px 6px', fontSize: '0.78rem', color: selected.assignee ? 'var(--accent-dim)' : 'var(--text-2)' }}>
                   <option value="">—</option>
-                  {ANALYSTS.map(n => <option key={n} value={n}>{n}</option>)}
+                  {analysts.map(n => <option key={n} value={n}>{n}</option>)}
                 </select>
               </div>
             </div>

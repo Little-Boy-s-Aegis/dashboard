@@ -768,3 +768,50 @@ func isPrivateIP(ipStr string) bool {
 	}
 	return false
 }
+
+// GET /api/operators
+func GetOperators(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Access-Control-Allow-Origin", getAllowedOrigin(r))
+	w.Header().Set("Access-Control-Allow-Credentials", "true")
+	w.Header().Set("Access-Control-Allow-Methods", "GET, OPTIONS")
+	w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization")
+	
+	if r.Method == http.MethodOptions {
+		w.WriteHeader(http.StatusOK)
+		return
+	}
+
+	type OperatorInfo struct {
+		UID      string `json:"uid"`
+		Username string `json:"username"`
+	}
+
+	operators := []OperatorInfo{}
+
+	if store.UsePostgres {
+		rows, err := store.SQL.Query("SELECT uid, username FROM operators ORDER BY uid ASC")
+		if err == nil {
+			defer rows.Close()
+			for rows.Next() {
+				var op OperatorInfo
+				if err := rows.Scan(&op.UID, &op.Username); err == nil {
+					operators = append(operators, op)
+				}
+			}
+		} else {
+			log.Printf("[DATABASE ERROR] GetOperators failed: %v", err)
+		}
+	} else {
+		// Fallback memory list
+		operators = []OperatorInfo{
+			{UID: "10001", Username: "admin"},
+			{UID: "10002", Username: "sarah"},
+			{UID: "10003", Username: "alex"},
+		}
+	}
+
+	// Also add "AI Copilot" as a virtual operator option!
+	operators = append(operators, OperatorInfo{UID: "99999", Username: "AI Copilot"})
+
+	writeJSON(w, http.StatusOK, operators)
+}

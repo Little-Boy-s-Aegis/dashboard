@@ -87,7 +87,7 @@ func IsSQLInjectionText(parts ...string) bool {
 
 func IsPersistentSecurityActionType(actionType string) bool {
 	switch strings.TrimSpace(actionType) {
-	case "Block IP", "Unblock IP", "Unblock All IPs", "Isolate Host", "Terminate Process", "Revoke Credentials", "Force Logout":
+	case "Block IP", "Unblock IP", "Unblock All IPs", "Isolate Host", "Terminate Process", "Revoke Credentials", "Force Logout", "Resolve Alert", "Assign Alert", "Bulk Resolve", "Bulk Assign":
 		return true
 	default:
 		return false
@@ -98,7 +98,7 @@ func ShouldPersistSecurityLog(entry *models.LogEntry) bool {
 	if entry == nil {
 		return false
 	}
-	if entry.ThreatFlagged {
+	if entry.ThreatFlagged || entry.Facility == "soc_audit" {
 		return true
 	}
 	switch strings.ToLower(strings.TrimSpace(entry.Severity)) {
@@ -283,34 +283,62 @@ func (db *Database) seedHistory() {
 
 	// Seed FIM events
 	db.FimCounter = 0
-	fimFiles := []struct {
-		path string
-		user string
-		proc string
-		ev   string
-	}{
-		{"/etc/passwd", "root", "/usr/sbin/useradd", "modify"},
-		{"/etc/shadow", "root", "/usr/sbin/chpasswd", "modify"},
-		{"/var/tmp/.lib_sys.so", "user1", "curl", "create"},
-		{"C:\\Windows\\System32\\drivers\\etc\\hosts", "Administrator", "notepad.exe", "modify"},
-		{"/etc/ssh/sshd_config", "root", "nano", "modify"},
-		{"/var/www/html/index.php", "www-data", "apache2", "modify"},
-		{"/tmp/malware.bin", "nobody", "wget", "create"},
-		{"/usr/bin/sudo", "root", "apt-get", "delete"},
-	}
 
 	for i := 0; i < 15; i++ {
-		fimIdx := i % len(fimFiles)
-		fim := fimFiles[fimIdx]
 		agentID := fmt.Sprintf("agent-0%d", (i%5)+1)
 		agent := db.Agents[agentID]
+		isWindows := strings.Contains(strings.ToLower(agent.OS), "windows")
+
+		var path string
+		var user string
+		var proc string
+		var ev   string
+
+		if isWindows {
+			winFimFiles := []struct {
+				path string
+				user string
+				proc string
+				ev   string
+			}{
+				{"C:\\Windows\\System32\\drivers\\etc\\hosts", "Administrator", "notepad.exe", "modify"},
+				{"C:\\Users\\admin\\AppData\\Local\\Temp\\malware.exe", "admin", "chrome.exe", "create"},
+				{"C:\\Windows\\System32\\cmd.exe", "SYSTEM", "msiexec.exe", "modify"},
+				{"C:\\Users\\admin\\Documents\\confidential.docx", "admin", "svchost_cipher.exe", "delete"},
+			}
+			idx := i % len(winFimFiles)
+			path = winFimFiles[idx].path
+			user = winFimFiles[idx].user
+			proc = winFimFiles[idx].proc
+			ev = winFimFiles[idx].ev
+		} else {
+			linuxFimFiles := []struct {
+				path string
+				user string
+				proc string
+				ev   string
+			}{
+				{"/etc/passwd", "root", "/usr/sbin/useradd", "modify"},
+				{"/etc/shadow", "root", "/usr/sbin/chpasswd", "modify"},
+				{"/var/tmp/.lib_sys.so", "user1", "curl", "create"},
+				{"/etc/ssh/sshd_config", "root", "nano", "modify"},
+				{"/var/www/html/index.php", "www-data", "apache2", "modify"},
+				{"/tmp/malware.bin", "nobody", "wget", "create"},
+				{"/usr/bin/sudo", "root", "apt-get", "delete"},
+			}
+			idx := i % len(linuxFimFiles)
+			path = linuxFimFiles[idx].path
+			user = linuxFimFiles[idx].user
+			proc = linuxFimFiles[idx].proc
+			ev = linuxFimFiles[idx].ev
+		}
 
 		db.FimCounter++
 		fimID := fmt.Sprintf("fim-%04d", db.FimCounter)
 		timeAgo := time.Duration(15-i) * 30 * time.Minute
 		fimTime := time.Now().Add(-timeAgo)
 
-		hashSource := fmt.Sprintf("%s-%s-%s", fim.path, fimTime.String(), agent.ID)
+		hashSource := fmt.Sprintf("%s-%s-%s", path, fimTime.String(), agent.ID)
 		md5Hash := fmt.Sprintf("%x", md5.Sum([]byte(hashSource)))
 		shaHash := fmt.Sprintf("%x", sha256.Sum256([]byte(hashSource)))
 
@@ -319,13 +347,13 @@ func (db *Database) seedHistory() {
 			Timestamp: fimTime,
 			AgentID:   agent.ID,
 			AgentName: agent.Name,
-			FilePath:  fim.path,
-			EventType: fim.ev,
+			FilePath:  path,
+			EventType: ev,
 			Size:      int64(1024 + rand.Intn(4096)),
 			MD5:       md5Hash,
 			SHA256:    shaHash,
-			User:      fim.user,
-			Process:   fim.proc,
+			User:      user,
+			Process:   proc,
 		})
 	}
 
@@ -507,9 +535,32 @@ func (db *Database) persistSeed() {
 
 func (db *Database) startSyncLoop() {
 	syncTicker := time.NewTicker(2 * time.Second)
+	metricTicker := time.NewTicker(3 * time.Second)
 	log.Printf("[SYNC] Starting background security log synchronization loop...")
-	for range syncTicker.C {
-		db.syncBankSecurityLogs()
+	for {
+		select {
+		case <-syncTicker.C:
+			db.syncBankSecurityLogs()
+		case <-metricTicker.C:
+			db.Mu.Lock()
+			// Fluctuate CPU/RAM/Disk metrics slightly
+			for _, agent := range db.Agents {
+				if agent.Status == "active" {
+					agent.CPUUsage = clamp(agent.CPUUsage+rand.Float64()*10-5, 2.0, 95.0)
+					agent.RAMUsage = clamp(agent.RAMUsage+rand.Float64()*4-2, 10.0, 95.0)
+					agent.DiskUsage = clamp(agent.DiskUsage+rand.Float64()*0.1, 10.0, 99.0)
+					agent.LastSeen = time.Now()
+				} else if agent.Status == "alerting" {
+					// Alerting agents have higher CPU/RAM usage
+					agent.CPUUsage = clamp(agent.CPUUsage+rand.Float64()*10-3, 60.0, 99.0)
+					agent.RAMUsage = clamp(agent.RAMUsage+rand.Float64()*5-1, 75.0, 98.0)
+					agent.LastSeen = time.Now()
+				}
+				db.SaveAgent(agent)
+			}
+			db.updateAgentThreatsAndNetwork()
+			db.Mu.Unlock()
+		}
 	}
 }
 
@@ -608,9 +659,9 @@ func (db *Database) startSimulator() {
 					StatusCode: code,
 				})
 			}
-			// Cap logs at 500
-			if len(db.Logs) > 500 {
-				db.Logs = db.Logs[len(db.Logs)-500:]
+			// Cap logs at 3000
+			if len(db.Logs) > 3000 {
+				db.Logs = db.Logs[len(db.Logs)-3000:]
 			}
 			db.Mu.Unlock()
 
@@ -712,27 +763,61 @@ func (db *Database) SimulateAttack(agentID string, attackType string) string {
 
 	switch attackType {
 	case "ransomware":
-		// Trigger Shadow Copy Deletion alert
+		var isWindows = strings.Contains(strings.ToLower(agent.OS), "windows")
+		var files []string
+		var user string
+		var process string
+		var cmdStr string
+		var alertDesc string
+		var rawLogStr string
+		var logMsg string
+
+		if isWindows {
+			files = []string{
+				"C:\\Users\\admin\\Documents\\report.docx",
+				"C:\\Users\\admin\\Documents\\financials.xlsx",
+				"C:\\Users\\admin\\Pictures\\photo.png",
+				"C:\\Users\\admin\\Desktop\\credentials.txt",
+			}
+			user = "Administrator"
+			process = "svchost_cipher.exe"
+			cmdStr = "vssadmin.exe delete shadows /all /quiet"
+			alertDesc = fmt.Sprintf("Command '%s' executed on %s. Multiple system backups are being wiped.", cmdStr, agent.Name)
+			rawLogStr = fmt.Sprintf(`{"timestamp":"%s","process":{"name":"vssadmin.exe","cmd":"%s"},"parent":{"name":"cmd.exe"},"user":"%s","agent":{"id":"%s","name":"%s"}}`, now.Format(time.RFC3339), cmdStr, user, agent.ID, agent.Name)
+			logMsg = "Process 'svchost_cipher.exe' spawned by Administrator with elevated privileges."
+		} else {
+			files = []string{
+				"/home/admin/Documents/report.docx",
+				"/home/admin/Documents/financials.xlsx",
+				"/home/admin/Pictures/photo.png",
+				"/home/admin/Desktop/credentials.txt",
+			}
+			user = "root"
+			process = "svchost_cipher"
+			cmdStr = "rm -rf /var/backups/* /etc/backup.conf"
+			alertDesc = fmt.Sprintf("Command '%s' executed on %s. Multiple system backups and configuration files are being wiped.", cmdStr, agent.Name)
+			rawLogStr = fmt.Sprintf(`{"timestamp":"%s","process":{"name":"rm","cmd":"%s"},"parent":{"name":"bash"},"user":"%s","agent":{"id":"%s","name":"%s"}}`, now.Format(time.RFC3339), cmdStr, user, agent.ID, agent.Name)
+			logMsg = "Process 'svchost_cipher' spawned by root with elevated privileges."
+		}
+
 		db.AlertCounter++
 		id1 := fmt.Sprintf("alt-%04d", db.AlertCounter)
 		db.AddAlert(&models.Alert{
 			ID:             id1,
 			RuleID:         "rule-ransom-01",
 			Severity:       "critical",
-			Title:          "Ransomware - Volume Shadow Copy Deletion",
-			Description:    fmt.Sprintf("Command 'vssadmin.exe delete shadows /all /quiet' executed on %s. Multiple system backups are being wiped.", agent.Name),
+			Title:          "Ransomware - Data Encryption Attempt",
+			Description:    alertDesc,
 			AgentID:        agent.ID,
 			AgentName:      agent.Name,
 			MITRETechnique: "T1485",
 			MITRETactics:   []string{"Impact"},
 			Category:       "malware",
 			Timestamp:      now,
-			RawLog:         fmt.Sprintf(`{"timestamp":"%s","process":{"name":"vssadmin.exe","cmd":"vssadmin.exe delete shadows /all /quiet"},"parent":{"name":"cmd.exe"},"user":"Administrator","agent":{"id":"%s","name":"%s"}}`, now.Format(time.RFC3339), agent.ID, agent.Name),
+			RawLog:         rawLogStr,
 			Status:         "open",
 		})
 
-		// Trigger rapid FIM events (files modifying/deleting)
-		files := []string{"C:\\Users\\admin\\Documents\\report.docx", "C:\\Users\\admin\\Documents\\financials.xlsx", "C:\\Users\\admin\\Pictures\\photo.png", "C:\\Users\\admin\\Desktop\\credentials.txt"}
 		for i, f := range files {
 			db.FimCounter++
 			db.AddFIMEvent(&models.FIMEvent{
@@ -745,8 +830,8 @@ func (db *Database) SimulateAttack(agentID string, attackType string) string {
 				Size:      8192,
 				MD5:       "098f6bcd4621d373cade4e832627b4f6",
 				SHA256:    "9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08",
-				User:      "Administrator",
-				Process:   "svchost_cipher.exe",
+				User:      user,
+				Process:   process,
 			})
 			db.FimCounter++
 			db.AddFIMEvent(&models.FIMEvent{
@@ -757,12 +842,11 @@ func (db *Database) SimulateAttack(agentID string, attackType string) string {
 				FilePath:  f,
 				EventType: "delete",
 				Size:      0,
-				User:      "Administrator",
-				Process:   "svchost_cipher.exe",
+				User:      user,
+				Process:   process,
 			})
 		}
 
-		// Write matching threat logs
 		db.LogCounter++
 		db.AddLog(&models.LogEntry{
 			ID:        fmt.Sprintf("log-%05d", db.LogCounter),
@@ -771,7 +855,7 @@ func (db *Database) SimulateAttack(agentID string, attackType string) string {
 			AgentName: agent.Name,
 			Facility:  "syslog",
 			Severity:  "alert",
-			Message:   "VSS Backup service stopped unexpectedly. Event ID: 7036.",
+			Message:   "Backup services stopped unexpectedly.",
 		})
 		db.LogCounter++
 		db.AddLog(&models.LogEntry{
@@ -781,7 +865,7 @@ func (db *Database) SimulateAttack(agentID string, attackType string) string {
 			AgentName: agent.Name,
 			Facility:  "auth",
 			Severity:  "warning",
-			Message:   "Process 'svchost_cipher.exe' spawned by Administrator with elevated privileges.",
+			Message:   logMsg,
 		})
 
 		return id1
@@ -837,42 +921,66 @@ func (db *Database) SimulateAttack(agentID string, attackType string) string {
 		return id2
 
 	case "malware":
-		// Trigger Malware execution alert (Lsass memory dump or mimikatz)
+		var isWindows = strings.Contains(strings.ToLower(agent.OS), "windows")
+		var alertTitle string
+		var alertDesc string
+		var rawLogStr string
+		var fimPath string
+		var fimUser string
+		var fimProc string
+		var logMsg string
+
+		if isWindows {
+			alertTitle = "Malware - Credentials Dumping (Mimikatz Activity)"
+			alertDesc = fmt.Sprintf("Lsass.exe memory dumping detected on %s. Critical threat targeting Domain Administrator credentials.", agent.Name)
+			rawLogStr = fmt.Sprintf(`{"timestamp":"%s","win_event":{"event_id":10,"source":"Microsoft-Windows-Sysmon","description":"Process accessed lsass.exe memory","target_process":"C:\\Windows\\System32\\lsass.exe","source_process":"C:\\Users\\public\\mktz.exe"},"agent":{"id":"%s","name":"%s"}}`, now.Format(time.RFC3339), agent.ID, agent.Name)
+			fimPath = "C:\\Users\\public\\mktz.exe"
+			fimUser = "public"
+			fimProc = "chrome.exe"
+			logMsg = "Sysmon Event ID 10: ProcessAccess (Source: mktz.exe, Target: lsass.exe, GrantedAccess: 0x1410)"
+		} else {
+			alertTitle = "Malware - Credentials Dumping (Shadow File Access)"
+			alertDesc = fmt.Sprintf("Sensitive /etc/shadow read attempt detected on %s. Critical threat targeting Linux account credentials.", agent.Name)
+			rawLogStr = fmt.Sprintf(`{"timestamp":"%s","linux_event":{"event_id":1100,"source":"auditd","description":"Process read sensitive shadow file","target_file":"/etc/shadow","source_process":"/tmp/mktz"},"agent":{"id":"%s","name":"%s"}}`, now.Format(time.RFC3339), agent.ID, agent.Name)
+			fimPath = "/tmp/mktz"
+			fimUser = "nobody"
+			fimProc = "wget"
+			logMsg = "Auditd Event: sensitive read on /etc/shadow by unauthorized process /tmp/mktz"
+		}
+
 		db.AlertCounter++
 		id3 := fmt.Sprintf("alt-%04d", db.AlertCounter)
 		db.AddAlert(&models.Alert{
 			ID:             id3,
 			RuleID:         "rule-malware-01",
 			Severity:       "critical",
-			Title:          "Malware - Credentials Dumping (Mimikatz Activity)",
-			Description:    fmt.Sprintf("Lsass.exe memory dumping detected on %s. Critical threat targeting Domain Administrator credentials.", agent.Name),
+			Title:          alertTitle,
+			Description:    alertDesc,
 			AgentID:        agent.ID,
 			AgentName:      agent.Name,
 			MITRETechnique: "T1003.001",
 			MITRETactics:   []string{"Credential Access"},
 			Category:       "malware",
 			Timestamp:      now,
-			RawLog:         fmt.Sprintf(`{"timestamp":"%s","win_event":{"event_id":10,"source":"Microsoft-Windows-Sysmon","description":"Process accessed lsass.exe memory","target_process":"C:\\Windows\\System32\\lsass.exe","source_process":"C:\\Users\\public\\mktz.exe"},"agent":{"id":"%s","name":"%s"}}`, now.Format(time.RFC3339), agent.ID, agent.Name),
+			RawLog:         rawLogStr,
 			Status:         "open",
 		})
 
-		// Trigger file integrity: dropping the malware bin
 		db.FimCounter++
 		db.AddFIMEvent(&models.FIMEvent{
 			ID:        fmt.Sprintf("fim-%04d", db.FimCounter),
 			Timestamp: now.Add(-5 * time.Second),
 			AgentID:   agent.ID,
 			AgentName: agent.Name,
-			FilePath:  "C:\\Users\\public\\mktz.exe",
+			FilePath:  fimPath,
 			EventType: "create",
 			Size:      240192,
 			MD5:       "d41d8cd98f00b204e9800998ecf8427e",
 			SHA256:    "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
-			User:      "public",
-			Process:   "chrome.exe",
+			User:      fimUser,
+			Process:   fimProc,
 		})
 
-		// Logs
 		db.LogCounter++
 		db.AddLog(&models.LogEntry{
 			ID:        fmt.Sprintf("log-%05d", db.LogCounter),
@@ -881,7 +989,7 @@ func (db *Database) SimulateAttack(agentID string, attackType string) string {
 			AgentName: agent.Name,
 			Facility:  "syslog",
 			Severity:  "alert",
-			Message:   "Sysmon Event ID 10: ProcessAccess (Source: mktz.exe, Target: lsass.exe, GrantedAccess: 0x1410)",
+			Message:   logMsg,
 		})
 
 		return id3
@@ -1010,6 +1118,9 @@ func (db *Database) syncBankSecurityLogs() {
 			case "PARAMETER_TAMPERING":
 				mitreTech = "T1565.002"
 				mitreTactics = []string{"Impact"}
+			case "BRUTE_FORCE":
+				mitreTech = "T1110"
+				mitreTactics = []string{"Credential Access"}
 			}
 
 			db.AlertCounter++
@@ -1070,8 +1181,8 @@ func (db *Database) syncBankSecurityLogs() {
 
 	if hasNewAlerts {
 		log.Printf("[SYNC] Successfully ingested new bank security logs/alerts into PostgreSQL.")
-		if len(db.Logs) > 500 {
-			db.Logs = db.Logs[len(db.Logs)-500:]
+		if len(db.Logs) > 3000 {
+			db.Logs = db.Logs[len(db.Logs)-3000:]
 		}
 		db.updateAgentThreatsAndNetwork()
 	}

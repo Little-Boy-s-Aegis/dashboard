@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { Shield, AlertTriangle, Monitor, FileText, Terminal, Activity, Clock, Zap, LogOut, User, RefreshCw, Cpu } from 'lucide-react';
+import { Shield, AlertTriangle, Monitor, FileText, Terminal, Activity, Clock, Zap, LogOut, User, RefreshCw, Cpu, Layout, MessageSquare } from 'lucide-react';
 import type { Agent, Alert, FIMEvent, DashboardSummary, ActionLog } from './types';
 import DashboardOverview from './components/DashboardOverview';
 import AlertsManager from './components/AlertsManager';
@@ -9,12 +9,14 @@ import LogExplorer from './components/LogExplorer';
 import ResponseCenter from './components/ResponseCenter';
 import SoarPerformanceDashboard from './components/SoarPerformanceDashboard';
 import Login from './components/Login';
+import CloudWatchDashboard from './components/CloudWatchDashboard';
+import OrchestratorChat from './components/OrchestratorChat';
 
 export default function App() {
   const [isAuthenticated, setIsAuthenticated] = useState<boolean | null>(null);
   const [isIpBanned, setIsIpBanned] = useState(false);
   const [user, setUser] = useState<string>('');
-  const [activeTab, setActiveTab] = useState<string>(() => localStorage.getItem('activeTab') || 'overview');
+  const [activeTab, setActiveTab] = useState<string>(() => localStorage.getItem('activeTab') || 'cloudwatch');
   const [timeRange, setTimeRange] = useState<string>(() => localStorage.getItem('timeRange') || '24h');
   const [summary, setSummary] = useState<DashboardSummary | null>(null);
   const [alerts, setAlerts] = useState<Alert[]>([]);
@@ -150,6 +152,10 @@ export default function App() {
         return <FimDashboard fimEvents={fimEvents} onRefresh={refreshAllData} />;
       case 'logs':
         return <LogExplorer onRefresh={refreshAllData} />;
+      case 'cloudwatch':
+        return <CloudWatchDashboard agents={agents} recentAlerts={alerts} />;
+      case 'orchestrator-chat':
+        return <OrchestratorChat agents={agents} />;
       default:
         return <div style={{ padding: 40, textAlign: 'center' }}><h2>Not Found</h2></div>;
     }
@@ -159,6 +165,8 @@ export default function App() {
   const totalActive = summary ? summary.criticalAlerts + summary.highAlerts : 0;
 
   const navItems = [
+    { key: 'cloudwatch', icon: Layout, label: 'Dashboard' },
+    { key: 'orchestrator-chat', icon: MessageSquare, label: 'Orchestrator Chat' },
     { key: 'overview', icon: Activity, label: 'Overview' },
     { key: 'alerts', icon: AlertTriangle, label: 'Alerts', badge: totalActive },
     { key: 'actions', icon: Zap, label: 'Response Center' },
@@ -291,7 +299,14 @@ export default function App() {
         </div>
       </aside>
 
-      <main className="main-content" style={{ display: 'flex', flexDirection: 'column', padding: '20px 24px' }}>
+      <main className="main-content" style={{ 
+        display: 'flex', 
+        flexDirection: 'column', 
+        padding: '20px 24px',
+        height: activeTab === 'orchestrator-chat' ? '100vh' : undefined,
+        maxHeight: activeTab === 'orchestrator-chat' ? '100vh' : undefined,
+        overflow: activeTab === 'orchestrator-chat' ? 'hidden' : undefined
+      }}>
         <div style={{
           display: 'flex', justifyContent: 'space-between', alignItems: 'center',
           borderBottom: '1px solid var(--border-1)', paddingBottom: 8, marginBottom: 16

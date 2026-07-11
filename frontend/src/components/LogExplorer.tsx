@@ -10,6 +10,7 @@ export default function LogExplorer({ onRefresh }: Props) {
   const [hist, setHist] = useState<Bucket[]>([]);
   const [query, setQuery] = useState('');
   const [facility, setFacility] = useState('');
+  const [actor, setActor] = useState('');
   const [dq, setDq] = useState('');
   const [loading, setLoading] = useState(false);
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
@@ -23,12 +24,13 @@ export default function LogExplorer({ onRefresh }: Props) {
     const p = new URLSearchParams();
     if (dq) p.append('q', dq);
     if (facility) p.append('facility', facility);
-    fetch(`/api/logs?${p.toString()}`).then(r => r.json()).then(d => {
+    if (actor) p.append('actor', actor);
+    fetch(`/api/logs?limit=250&${p.toString()}`).then(r => r.json()).then(d => {
       setLogs(d.logs || []); setHist(d.histogram || []); setLoading(false); onRefresh();
     }).catch(() => setLoading(false));
   };
 
-  useEffect(() => { fetchLogs(); }, [dq, facility]);
+  useEffect(() => { fetchLogs(); }, [dq, facility, actor]);
 
   const sevStyle = (s: string) => {
     if (s === 'alert') return { color: 'var(--critical-dim)', background: 'var(--critical-bg)' };
@@ -65,6 +67,13 @@ export default function LogExplorer({ onRefresh }: Props) {
           <option value="web">web/http</option>
           <option value="daemon">daemon</option>
           <option value="syslog">syslog</option>
+          <option value="soc_audit">SOC Audit</option>
+        </select>
+        <select className="select-input" value={actor} onChange={e => setActor(e.target.value)} style={{ minWidth: 140 }}>
+          <option value="">All Originators</option>
+          <option value="system">🖥️ System Agents</option>
+          <option value="soc">👤 SOC Operators</option>
+          <option value="ai">🤖 AI Orchestrator</option>
         </select>
       </div>
 
@@ -117,7 +126,11 @@ export default function LogExplorer({ onRefresh }: Props) {
                   {expanded.has(log.id) ? <ChevronDown size={10} /> : <ChevronRight size={10} />}
                 </span>
                 <span style={{ color: 'var(--text-3)', whiteSpace: 'nowrap', fontSize: '0.72rem' }}>
-                  {new Date(log.timestamp).toISOString().replace('T', ' ').substring(0, 19)}
+                  {(() => {
+                    const d = new Date(log.timestamp);
+                    const pad = (n: number) => String(n).padStart(2, '0');
+                    return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
+                  })()}
                 </span>
                 <span style={{ color: 'var(--accent)', fontWeight: 600, whiteSpace: 'nowrap' }}>[{log.agentName}]</span>
                 <span style={{ color: 'var(--purple)', whiteSpace: 'nowrap', fontSize: '0.72rem' }}>{log.facility}</span>

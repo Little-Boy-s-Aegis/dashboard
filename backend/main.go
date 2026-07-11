@@ -1,6 +1,7 @@
 package main
 
 import (
+	"compress/gzip"
 	"context"
 	"fmt"
 	"io"
@@ -121,6 +122,28 @@ func corsMiddleware(next http.Handler) http.Handler {
 	})
 }
 
+type gzipResponseWriter struct {
+	io.Writer
+	http.ResponseWriter
+}
+
+func (w gzipResponseWriter) Write(b []byte) (int, error) {
+	return w.Writer.Write(b)
+}
+
+func gzipMiddleware(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if !strings.Contains(r.Header.Get("Accept-Encoding"), "gzip") {
+			next.ServeHTTP(w, r)
+			return
+		}
+		w.Header().Set("Content-Encoding", "gzip")
+		gz := gzip.NewWriter(w)
+		defer gz.Close()
+		next.ServeHTTP(gzipResponseWriter{Writer: gz, ResponseWriter: w}, r)
+	})
+}
+
 func main() {
 	// Configure sanitized logging
 	log.SetOutput(&LogSanitizerWriter{w: os.Stderr})
@@ -152,6 +175,7 @@ func main() {
 	mux.HandleFunc("/api/auth/login", handlers.Login)
 	mux.HandleFunc("/api/auth/logout", handlers.Logout)
 	mux.HandleFunc("/api/auth/check", handlers.CheckAuth)
+	mux.HandleFunc("/api/operators", handlers.GetOperators)
 
 	// API Routes
 	mux.HandleFunc("/api/summary", handlers.GetSummary)
@@ -236,7 +260,7 @@ func main() {
 	})
 
 	// Wrap mux with Auth middleware, then CORS middleware
-	handler := corsMiddleware(handlers.IPBanMiddleware(handlers.AuthMiddleware(mux)))
+	handler := corsMiddleware(handlers.IPBanMiddleware(handlers.AuthMiddleware(gzipMiddleware(mux))))
 
 	port := os.Getenv("PORT")
 	if port == "" {

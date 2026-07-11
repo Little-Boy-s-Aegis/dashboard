@@ -337,7 +337,11 @@ func pruneOperationalData() {
 			'Isolate Host',
 			'Terminate Process',
 			'Revoke Credentials',
-			'Force Logout'
+			'Force Logout',
+			'Resolve Alert',
+			'Assign Alert',
+			'Bulk Resolve',
+			'Bulk Assign'
 		)
 	`); err != nil {
 		log.Printf("[DATABASE WARNING] Failed to prune non-security action logs: %v", err)
@@ -363,7 +367,7 @@ func pruneOperationalData() {
 		log.Printf("[DATABASE WARNING] Failed to cap action_logs retention: %v", err)
 	}
 
-	logLimit := retentionLimitFromEnv("AEGIS_SECURITY_LOG_RETAIN_MAX", 2000)
+	logLimit := retentionLimitFromEnv("AEGIS_SECURITY_LOG_RETAIN_MAX", 5000)
 	if _, err := SQL.Exec(`
 		WITH ranked AS (
 			SELECT id, ROW_NUMBER() OVER (ORDER BY timestamp DESC, id DESC) AS rn
@@ -633,8 +637,9 @@ func LoadSQLLogEntries() ([]*models.LogEntry, error) {
 			FROM log_entries
 			WHERE COALESCE(threat_flagged, FALSE) = TRUE
 			   OR lower(severity) IN ('critical', 'high', 'medium', 'alert', 'error')
+			   OR facility = 'soc_audit'
 			ORDER BY timestamp DESC, id DESC
-			LIMIT 500
+			LIMIT 3000
 		) recent
 		ORDER BY timestamp ASC, id ASC
 	`)
