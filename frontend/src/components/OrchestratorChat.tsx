@@ -426,6 +426,7 @@ export default function OrchestratorChat({ agents }: Props) {
   }, [conversations, activeTab, isTyping]);
 
   const handleChatScroll = () => {
+    if (activeMessageId) return;
     if (chatScrollContainerRef.current && jsonStreamRef.current) {
       const chatEl = chatScrollContainerRef.current;
       const jsonEl = jsonStreamRef.current;
@@ -467,6 +468,7 @@ export default function OrchestratorChat({ agents }: Props) {
   };
 
   const handleJsonScroll = () => {
+    if (activeMessageId) return;
     if (chatScrollContainerRef.current && jsonStreamRef.current) {
       const chatEl = chatScrollContainerRef.current;
       const jsonEl = jsonStreamRef.current;
@@ -506,6 +508,65 @@ export default function OrchestratorChat({ agents }: Props) {
       }
     }
   };
+
+  // Helper to check if child element is fully visible inside parent container
+  const isElementVisible = (parent: HTMLElement, child: HTMLElement) => {
+    const parentRect = parent.getBoundingClientRect();
+    const childRect = child.getBoundingClientRect();
+    return (
+      childRect.top >= parentRect.top &&
+      childRect.bottom <= parentRect.bottom
+    );
+  };
+
+  // Smoothly center the corresponding JSON card in the right column
+  const alignRightCard = (id: string) => {
+    const jsonEl = jsonStreamRef.current;
+    const rightEl = document.getElementById(`msg-right-${id}`);
+    if (jsonEl && rightEl) {
+      if (isElementVisible(jsonEl, rightEl)) return;
+      const jsonRect = jsonEl.getBoundingClientRect();
+      const rightRect = rightEl.getBoundingClientRect();
+      const offset = (rightRect.top - jsonRect.top) - (jsonRect.height / 2) + (rightRect.height / 2);
+      
+      ignoreScrollRef.current = jsonEl;
+      jsonEl.scrollTo({
+        top: jsonEl.scrollTop + offset,
+        behavior: 'smooth'
+      });
+    }
+  };
+
+  // Smoothly center the corresponding chat bubble in the left column
+  const alignLeftBubble = (id: string) => {
+    const chatEl = chatScrollContainerRef.current;
+    const leftEl = document.getElementById(`msg-left-${id}`);
+    if (chatEl && leftEl) {
+      if (isElementVisible(chatEl, leftEl)) return;
+      const chatRect = chatEl.getBoundingClientRect();
+      const leftRect = leftEl.getBoundingClientRect();
+      const offset = (leftRect.top - chatRect.top) - (chatRect.height / 2) + (leftRect.height / 2);
+      
+      ignoreScrollRef.current = chatEl;
+      chatEl.scrollTo({
+        top: chatEl.scrollTop + offset,
+        behavior: 'smooth'
+      });
+    }
+  };
+
+  // Trigger alignment when a message is highlighted or clicked
+  useEffect(() => {
+    if (!activeMessageId) return;
+    
+    // Defer alignment slightly to let state update settle
+    const t = setTimeout(() => {
+      alignRightCard(activeMessageId);
+      alignLeftBubble(activeMessageId);
+    }, 50);
+
+    return () => clearTimeout(t);
+  }, [activeMessageId]);
 
   const handleSendMessage = (e: React.FormEvent) => {
     e.preventDefault();
