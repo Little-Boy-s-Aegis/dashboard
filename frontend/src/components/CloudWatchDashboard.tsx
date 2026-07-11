@@ -164,6 +164,8 @@ export default function CloudWatchDashboard({ agents, recentAlerts }: Props) {
 
   const [activeDragId, setActiveDragId] = useState<string | null>(null);
   const [activeResizeId, setActiveResizeId] = useState<string | null>(null);
+  const [dragOffset, setDragOffset] = useState<{ x: number; y: number } | null>(null);
+  const [ghostCoords, setGhostCoords] = useState<{ x: number; y: number; w: number; h: number } | null>(null);
 
   const [isConfigModalOpen, setIsConfigModalOpen] = useState(false);
   const [editingWidgetId, setEditingWidgetId] = useState<string | null>(null);
@@ -322,6 +324,13 @@ export default function CloudWatchDashboard({ agents, recentAlerts }: Props) {
   const handleDragStart = (e: React.MouseEvent, widgetId: string) => {
     e.preventDefault();
     setActiveDragId(widgetId);
+    setDragOffset({ x: 0, y: 0 });
+    
+    const widget = widgets.find(w => w.id === widgetId);
+    if (!widget) return;
+    
+    setGhostCoords({ x: widget.x, y: widget.y, w: widget.w, h: widget.h });
+
     const rect = containerRef.current?.getBoundingClientRect();
     if (!rect) return;
     const colWidth = rect.width / 12;
@@ -329,16 +338,20 @@ export default function CloudWatchDashboard({ agents, recentAlerts }: Props) {
 
     const startX = e.clientX;
     const startY = e.clientY;
-    const widget = widgets.find(w => w.id === widgetId);
-    if (!widget) return;
-
     const initialX = widget.x;
     const initialY = widget.y;
+
+    let lastGhostX = initialX;
+    let lastGhostY = initialY;
 
     const onMouseMove = (moveEvent: MouseEvent) => {
       const deltaX = moveEvent.clientX - startX;
       const deltaY = moveEvent.clientY - startY;
 
+      // Smooth absolute positioning of the dragged card
+      setDragOffset({ x: deltaX, y: deltaY });
+
+      // Target grid coordinates
       let newX = Math.round(initialX + deltaX / colWidth);
       let newY = Math.round(initialY + deltaY / rowHeight);
 
@@ -346,22 +359,27 @@ export default function CloudWatchDashboard({ agents, recentAlerts }: Props) {
       newX = Math.max(0, Math.min(12 - widget.w, newX));
       newY = Math.max(0, newY);
 
-      setWidgets(prev => {
-        const mapped = prev.map(w => w.id === widgetId ? { ...w, x: newX, y: newY } : w);
-        return resolveCollisions(mapped, widgetId);
-      });
+      if (newX !== lastGhostX || newY !== lastGhostY) {
+        lastGhostX = newX;
+        lastGhostY = newY;
+        setGhostCoords({ x: newX, y: newY, w: widget.w, h: widget.h });
+      }
     };
 
     const onMouseUp = () => {
       window.removeEventListener('mousemove', onMouseMove);
       window.removeEventListener('mouseup', onMouseUp);
-      setActiveDragId(null);
       
       setWidgets(current => {
-        const compacted = compactLayout(current);
+        const updated = current.map(w => w.id === widgetId ? { ...w, x: lastGhostX, y: lastGhostY } : w);
+        const compacted = compactLayout(resolveCollisions(updated, widgetId));
         if (autosave) saveToStorage(compacted);
         return compacted;
       });
+
+      setActiveDragId(null);
+      setDragOffset(null);
+      setGhostCoords(null);
     };
 
     window.addEventListener('mousemove', onMouseMove);
@@ -385,6 +403,9 @@ export default function CloudWatchDashboard({ agents, recentAlerts }: Props) {
     const initialW = widget.w;
     const initialH = widget.h;
 
+    let lastW = initialW;
+    let lastH = initialH;
+
     const onMouseMove = (moveEvent: MouseEvent) => {
       const deltaX = moveEvent.clientX - startX;
       const deltaY = moveEvent.clientY - startY;
@@ -396,10 +417,14 @@ export default function CloudWatchDashboard({ agents, recentAlerts }: Props) {
       newW = Math.max(2, Math.min(12 - widget.x, newW));
       newH = Math.max(3, newH);
 
-      setWidgets(prev => {
-        const mapped = prev.map(w => w.id === widgetId ? { ...w, w: newW, h: newH } : w);
-        return resolveCollisions(mapped, widgetId);
-      });
+      if (newW !== lastW || newH !== lastH) {
+        lastW = newW;
+        lastH = newH;
+        setWidgets(prev => {
+          const mapped = prev.map(w => w.id === widgetId ? { ...w, w: newW, h: newH } : w);
+          return resolveCollisions(mapped, widgetId);
+        });
+      }
     };
 
     const onMouseUp = () => {
@@ -417,6 +442,22 @@ export default function CloudWatchDashboard({ agents, recentAlerts }: Props) {
     window.addEventListener('mousemove', onMouseMove);
     window.addEventListener('mouseup', onMouseUp);
   };
+
+  const displayWidgets = (() => {
+    if (activeDragId && ghostCoords) {
+      const temp = widgets.map(w => w.id === activeDragId ? { ...w, x: ghostCoords.x, y: ghostCoords.y } : w);
+      const resolved = resolveCollisions(temp, activeDragId);
+      const original = widgets.find(w => w.id === activeDragId);
+      if (original) {
+        return resolved.map(w => w.id === activeDragId ? { ...w, x: original.x, y: original.y } : w);
+      }
+      return resolved;
+    }
+    if (activeResizeId) {
+      return resolveCollisions(widgets, activeResizeId);
+    }
+    return widgets;
+  })();
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 14, minWidth: 0, animation: 'fadeInUp 0.25s ease-out' }}>
@@ -526,7 +567,22 @@ export default function CloudWatchDashboard({ agents, recentAlerts }: Props) {
           transition: 'background-image 0.2s ease, border-color 0.2s ease'
         }}
       >
-        {widgets.map(w => (
+        {/* Ghost placeholder card showing snap coordinate while dragging */}
+        {activeDragId && ghostCoords && (
+          <div
+            style={{
+              gridColumn: `${ghostCoords.x + 1} / span ${ghostCoords.w}`,
+              gridRow: `${ghostCoords.y + 1} / span ${ghostCoords.h}`,
+              border: '2px dashed rgba(255, 153, 0, 0.6)',
+              background: 'rgba(255, 153, 0, 0.04)',
+              borderRadius: 'var(--r-md)',
+              zIndex: 5,
+              pointerEvents: 'none'
+            }}
+          />
+        )}
+
+        {displayWidgets.map(w => (
           <div
             key={w.id}
             style={{
@@ -541,6 +597,10 @@ export default function CloudWatchDashboard({ agents, recentAlerts }: Props) {
               borderColor: (activeDragId === w.id || activeResizeId === w.id) 
                 ? 'rgba(255, 153, 0, 0.4)' 
                 : undefined,
+              transform: (activeDragId === w.id && dragOffset) 
+                ? `translate3d(${dragOffset.x}px, ${dragOffset.y}px, 0)` 
+                : undefined,
+              opacity: activeDragId === w.id ? 0.85 : 1,
               transition: (activeDragId === w.id || activeResizeId === w.id) ? 'none' : 'box-shadow 0.2s ease, border-color 0.2s ease',
               borderTop: '3px solid #ff9900' // orange accent bar for AWS style!
             }}
@@ -1188,12 +1248,12 @@ function WidgetContent({ widget, agents, recentAlerts }: ContentProps) {
             />
             
             {/* Needle pointer */}
-            <polygon 
-              points="49,50 51,50 50,16" 
-              fill="#ef4444" 
-              transform={`rotate(${needleRotation}, 50, 50)`} 
-              style={{ transformOrigin: '50px 50px', transition: 'transform 0.8s cubic-bezier(0.34, 1.56, 0.64, 1)' }} 
-            />
+            <g transform={`rotate(${needleRotation}, 50, 50)`}>
+              <polygon 
+                points="49,50 51,50 50,16" 
+                fill="#ef4444" 
+              />
+            </g>
             {/* Center Cap */}
             <circle cx="50" cy="50" r="3.5" fill="var(--text-0)" />
 
