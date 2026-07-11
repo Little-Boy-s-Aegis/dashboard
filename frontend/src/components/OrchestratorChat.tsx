@@ -598,10 +598,19 @@ export default function OrchestratorChat({ agents }: Props) {
       const currentAgent = agents.find(a => a.id === currentTab) || { name: 'Agent', ip: '127.0.0.1' };
 
       if (lowerInput.includes('status') || lowerInput.includes('check')) {
-        responseMsgText = `Orchestrator AI Response: ${currentAgent.name} status query parsed. Core parameters checked. Threat level normal. CPU and latency values are within threshold.`;
+        const actualAgent = agents.find(a => a.id === currentTab);
+        const cpu = actualAgent ? actualAgent.cpuUsage : 0;
+        const ram = actualAgent ? actualAgent.ramUsage : 0;
+        const status = actualAgent ? actualAgent.status : 'unknown';
+        const threatScore = actualAgent ? actualAgent.threatScore : 0;
+
+        responseMsgText = `Orchestrator AI Response: ${currentAgent.name} status query parsed. Status is currently ${status.toUpperCase()} with threat score ${threatScore}/100. CPU: ${cpu.toFixed(1)}%, RAM: ${ram.toFixed(1)}%.`;
         responseDetails = JSON.stringify({
           check_timestamp: new Date().toISOString(),
-          status: "OK",
+          status: status,
+          threat_score: threatScore,
+          cpu_usage: `${cpu.toFixed(1)}%`,
+          ram_usage: `${ram.toFixed(1)}%`,
           agent_ip: currentAgent.ip
         }, null, 2);
       } else if (lowerInput.includes('quarantine') || lowerInput.includes('isolate')) {
