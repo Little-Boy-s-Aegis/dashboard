@@ -126,7 +126,11 @@ export default function LogExplorer({ onRefresh }: Props) {
                   {expanded.has(log.id) ? <ChevronDown size={10} /> : <ChevronRight size={10} />}
                 </span>
                 <span style={{ color: 'var(--text-3)', whiteSpace: 'nowrap', fontSize: '0.72rem' }}>
-                  {new Date(log.timestamp).toISOString().replace('T', ' ').substring(0, 19)}
+                  {(() => {
+                    const d = new Date(log.timestamp);
+                    const pad = (n: number) => String(n).padStart(2, '0');
+                    return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
+                  })()}
                 </span>
                 <span style={{ color: 'var(--accent)', fontWeight: 600, whiteSpace: 'nowrap' }}>[{log.agentName}]</span>
                 <span style={{ color: 'var(--purple)', whiteSpace: 'nowrap', fontSize: '0.72rem' }}>{log.facility}</span>
