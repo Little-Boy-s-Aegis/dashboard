@@ -10,6 +10,7 @@ export default function LogExplorer({ onRefresh }: Props) {
   const [hist, setHist] = useState<Bucket[]>([]);
   const [query, setQuery] = useState('');
   const [facility, setFacility] = useState('');
+  const [actor, setActor] = useState('');
   const [dq, setDq] = useState('');
   const [loading, setLoading] = useState(false);
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
@@ -23,12 +24,13 @@ export default function LogExplorer({ onRefresh }: Props) {
     const p = new URLSearchParams();
     if (dq) p.append('q', dq);
     if (facility) p.append('facility', facility);
+    if (actor) p.append('actor', actor);
     fetch(`/api/logs?${p.toString()}`).then(r => r.json()).then(d => {
       setLogs(d.logs || []); setHist(d.histogram || []); setLoading(false); onRefresh();
     }).catch(() => setLoading(false));
   };
 
-  useEffect(() => { fetchLogs(); }, [dq, facility]);
+  useEffect(() => { fetchLogs(); }, [dq, facility, actor]);
 
   const sevStyle = (s: string) => {
     if (s === 'alert') return { color: 'var(--critical-dim)', background: 'var(--critical-bg)' };
@@ -66,6 +68,12 @@ export default function LogExplorer({ onRefresh }: Props) {
           <option value="daemon">daemon</option>
           <option value="syslog">syslog</option>
           <option value="soc_audit">SOC Audit</option>
+        </select>
+        <select className="select-input" value={actor} onChange={e => setActor(e.target.value)} style={{ minWidth: 140 }}>
+          <option value="">All Originators</option>
+          <option value="system">🖥️ System Agents</option>
+          <option value="soc">👤 SOC Operators</option>
+          <option value="ai">🤖 AI Orchestrator</option>
         </select>
       </div>
 

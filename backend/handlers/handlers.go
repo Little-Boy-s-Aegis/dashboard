@@ -391,6 +391,7 @@ func GetLogs(w http.ResponseWriter, r *http.Request) {
 	searchQuery := strings.ToLower(r.URL.Query().Get("q"))
 	agentFilter := r.URL.Query().Get("agentId")
 	facilityFilter := r.URL.Query().Get("facility")
+	actorFilter := r.URL.Query().Get("actor")
 
 	filteredLogs := make([]*models.LogEntry, 0)
 
@@ -404,6 +405,20 @@ func GetLogs(w http.ResponseWriter, r *http.Request) {
 		if facilityFilter != "" && log.Facility != facilityFilter {
 			continue
 		}
+		if actorFilter == "soc" {
+			if !strings.HasPrefix(log.AgentName, "SOC (") {
+				continue
+			}
+		} else if actorFilter == "ai" {
+			if !strings.HasPrefix(log.AgentName, "SOAR") {
+				continue
+			}
+		} else if actorFilter == "system" {
+			if strings.HasPrefix(log.AgentName, "SOC (") || strings.HasPrefix(log.AgentName, "SOAR") {
+				continue
+			}
+		}
+
 		if searchQuery != "" {
 			match := strings.Contains(strings.ToLower(log.Message), searchQuery) ||
 				strings.Contains(strings.ToLower(log.Facility), searchQuery) ||
@@ -1830,6 +1845,19 @@ func LogSOCToSyslog(actor string, actionType string, target string, message stri
 		ASN:            "N/A",
 		AssetCritical:  "low",
 		ThreatFlagged:  false,
+		
+		// ECS Fields
+		ECSTimestamp:    time.Now().Format(time.RFC3339Nano),
+		ECSLogLevel:     "info",
+		ECSEventDataset: "soc_audit",
+		ECSEventID:      logID,
+		ECSSourceIP:     "127.0.0.1",
+		ECSServiceName:  "soc-console-service",
+		ECSAgentID:      "soc-console",
+		ECSAgentName:    actorName,
+		ECSAgentType:    "console",
+		ECSEventKind:    "event",
+		ECSEventOutcome: "success",
 	}
 
 	if store.UsePostgres {
