@@ -73,6 +73,84 @@ const DEFAULT_WIDGETS: Widget[] = [
   }
 ];
 
+const resolveCollisions = (allWidgets: Widget[], activeId: string): Widget[] => {
+  const sorted = [...allWidgets].sort((a, b) => {
+    if (a.y !== b.y) return a.y - b.y;
+    return a.x - b.x;
+  });
+
+  const activeWidget = sorted.find(w => w.id === activeId);
+  if (!activeWidget) return allWidgets;
+
+  const positioned: Widget[] = [];
+  positioned.push(activeWidget);
+
+  const overlaps = (w1: Widget, w2: Widget) => {
+    return !(
+      w1.x + w1.w <= w2.x ||
+      w2.x + w2.w <= w1.x ||
+      w1.y + w1.h <= w2.y ||
+      w2.y + w2.h <= w1.y
+    );
+  };
+
+  sorted.forEach(w => {
+    if (w.id === activeId) return;
+
+    let current = { ...w };
+    let hasCollision = true;
+
+    while (hasCollision) {
+      hasCollision = false;
+      for (const other of positioned) {
+        if (overlaps(current, other)) {
+          current.y = other.y + other.h;
+          hasCollision = true;
+          break;
+        }
+      }
+    }
+    positioned.push(current);
+  });
+
+  return positioned;
+};
+
+const compactLayout = (allWidgets: Widget[]): Widget[] => {
+  const sorted = [...allWidgets].sort((a, b) => a.y - b.y);
+  const compacted: Widget[] = [];
+  
+  const overlaps = (w1: Widget, w2: Widget) => {
+    return !(
+      w1.x + w1.w <= w2.x ||
+      w2.x + w2.w <= w1.x ||
+      w1.y + w1.h <= w2.y ||
+      w2.y + w2.h <= w1.y
+    );
+  };
+
+  sorted.forEach(w => {
+    let current = { ...w };
+    while (current.y > 0) {
+      current.y--;
+      let collides = false;
+      for (const other of compacted) {
+        if (overlaps(current, other)) {
+          collides = true;
+          break;
+        }
+      }
+      if (collides) {
+        current.y++;
+        break;
+      }
+    }
+    compacted.push(current);
+  });
+
+  return compacted;
+};
+
 export default function CloudWatchDashboard({ agents, recentAlerts }: Props) {
   const [widgets, setWidgets] = useState<Widget[]>(() => {
     const saved = localStorage.getItem('cw_widgets');
@@ -268,19 +346,22 @@ export default function CloudWatchDashboard({ agents, recentAlerts }: Props) {
       newX = Math.max(0, Math.min(12 - widget.w, newX));
       newY = Math.max(0, newY);
 
-      setWidgets(prev => prev.map(w => w.id === widgetId ? { ...w, x: newX, y: newY } : w));
+      setWidgets(prev => {
+        const mapped = prev.map(w => w.id === widgetId ? { ...w, x: newX, y: newY } : w);
+        return resolveCollisions(mapped, widgetId);
+      });
     };
 
     const onMouseUp = () => {
       window.removeEventListener('mousemove', onMouseMove);
       window.removeEventListener('mouseup', onMouseUp);
       setActiveDragId(null);
-      if (autosave) {
-        setWidgets(current => {
-          saveToStorage(current);
-          return current;
-        });
-      }
+      
+      setWidgets(current => {
+        const compacted = compactLayout(current);
+        if (autosave) saveToStorage(compacted);
+        return compacted;
+      });
     };
 
     window.addEventListener('mousemove', onMouseMove);
@@ -315,19 +396,22 @@ export default function CloudWatchDashboard({ agents, recentAlerts }: Props) {
       newW = Math.max(2, Math.min(12 - widget.x, newW));
       newH = Math.max(3, newH);
 
-      setWidgets(prev => prev.map(w => w.id === widgetId ? { ...w, w: newW, h: newH } : w));
+      setWidgets(prev => {
+        const mapped = prev.map(w => w.id === widgetId ? { ...w, w: newW, h: newH } : w);
+        return resolveCollisions(mapped, widgetId);
+      });
     };
 
     const onMouseUp = () => {
       window.removeEventListener('mousemove', onMouseMove);
       window.removeEventListener('mouseup', onMouseUp);
       setActiveResizeId(null);
-      if (autosave) {
-        setWidgets(current => {
-          saveToStorage(current);
-          return current;
-        });
-      }
+      
+      setWidgets(current => {
+        const compacted = compactLayout(current);
+        if (autosave) saveToStorage(compacted);
+        return compacted;
+      });
     };
 
     window.addEventListener('mousemove', onMouseMove);
