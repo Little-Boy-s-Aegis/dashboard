@@ -48,6 +48,7 @@ export default function OrchestratorChat({ agents }: Props) {
   const jsonStreamRef = useRef<HTMLDivElement>(null);
   const chatScrollContainerRef = useRef<HTMLDivElement>(null);
   const ignoreScrollRef = useRef<HTMLDivElement | null>(null);
+  const isFirstRender = useRef(true);
   const [activeMessageId, setActiveMessageId] = useState<string | null>(null);
 
   // Fetch real-time security events & SOAR actions from the backend APIs
@@ -405,8 +406,8 @@ export default function OrchestratorChat({ agents }: Props) {
     const tabChanged = prevTabRef.current !== activeTab;
     const newMsgAdded = msgCount > prevMsgCountRef.current;
     
-    // Auto scroll if tab changed, or user is already near the bottom
-    const shouldScroll = tabChanged || (newMsgAdded && isNearBottom());
+    // Auto scroll if first render, tab changed, or user is already near the bottom
+    const shouldScroll = isFirstRender.current || tabChanged || (newMsgAdded && isNearBottom());
 
     if (shouldScroll) {
       setTimeout(() => {
@@ -419,6 +420,7 @@ export default function OrchestratorChat({ agents }: Props) {
       }, 50);
     }
 
+    isFirstRender.current = false;
     prevTabRef.current = activeTab;
     prevMsgCountRef.current = msgCount;
   }, [conversations, activeTab, isTyping]);
