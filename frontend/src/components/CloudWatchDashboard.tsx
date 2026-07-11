@@ -84,6 +84,9 @@ export default function CloudWatchDashboard({ agents, recentAlerts }: Props) {
     return saved ? JSON.parse(saved) : true;
   });
 
+  const [activeDragId, setActiveDragId] = useState<string | null>(null);
+  const [activeResizeId, setActiveResizeId] = useState<string | null>(null);
+
   const [isConfigModalOpen, setIsConfigModalOpen] = useState(false);
   const [editingWidgetId, setEditingWidgetId] = useState<string | null>(null);
 
@@ -240,6 +243,7 @@ export default function CloudWatchDashboard({ agents, recentAlerts }: Props) {
   // Drag handles
   const handleDragStart = (e: React.MouseEvent, widgetId: string) => {
     e.preventDefault();
+    setActiveDragId(widgetId);
     const rect = containerRef.current?.getBoundingClientRect();
     if (!rect) return;
     const colWidth = rect.width / 12;
@@ -270,6 +274,7 @@ export default function CloudWatchDashboard({ agents, recentAlerts }: Props) {
     const onMouseUp = () => {
       window.removeEventListener('mousemove', onMouseMove);
       window.removeEventListener('mouseup', onMouseUp);
+      setActiveDragId(null);
       if (autosave) {
         setWidgets(current => {
           saveToStorage(current);
@@ -285,6 +290,7 @@ export default function CloudWatchDashboard({ agents, recentAlerts }: Props) {
   const handleResizeStart = (e: React.MouseEvent, widgetId: string) => {
     e.preventDefault();
     e.stopPropagation();
+    setActiveResizeId(widgetId);
     const rect = containerRef.current?.getBoundingClientRect();
     if (!rect) return;
     const colWidth = rect.width / 12;
@@ -315,6 +321,7 @@ export default function CloudWatchDashboard({ agents, recentAlerts }: Props) {
     const onMouseUp = () => {
       window.removeEventListener('mousemove', onMouseMove);
       window.removeEventListener('mouseup', onMouseUp);
+      setActiveResizeId(null);
       if (autosave) {
         setWidgets(current => {
           saveToStorage(current);
@@ -419,11 +426,20 @@ export default function CloudWatchDashboard({ agents, recentAlerts }: Props) {
           gap: 12, 
           position: 'relative', 
           background: 'rgba(0, 0, 0, 0.15)',
+          backgroundImage: (activeDragId || activeResizeId) 
+            ? 'radial-gradient(rgba(255, 153, 0, 0.12) 1px, transparent 1px)' 
+            : 'radial-gradient(rgba(255, 255, 255, 0.03) 1px, transparent 1px)',
+          backgroundSize: (activeDragId || activeResizeId) 
+            ? '8.333% 40px' 
+            : '32px 32px',
           borderRadius: 'var(--r-md)',
           padding: 12,
           minHeight: 'calc(100vh - 160px)',
           overflowY: 'auto',
-          border: '1px dashed var(--border-0)'
+          border: (activeDragId || activeResizeId) 
+            ? '1px dashed rgba(255, 153, 0, 0.4)' 
+            : '1px dashed var(--border-0)',
+          transition: 'background-image 0.2s ease, border-color 0.2s ease'
         }}
       >
         {widgets.map(w => (
@@ -434,7 +450,15 @@ export default function CloudWatchDashboard({ agents, recentAlerts }: Props) {
               gridRow: `${w.y + 1} / span ${w.h}`,
               display: 'flex',
               flexDirection: 'column',
-              zIndex: 10
+              zIndex: (activeDragId === w.id || activeResizeId === w.id) ? 100 : 10,
+              boxShadow: (activeDragId === w.id || activeResizeId === w.id) 
+                ? '0 12px 32px rgba(255, 153, 0, 0.15), 0 0 0 1px rgba(255, 153, 0, 0.4)' 
+                : '0 4px 12px rgba(0,0,0,0.1)',
+              borderColor: (activeDragId === w.id || activeResizeId === w.id) 
+                ? 'rgba(255, 153, 0, 0.4)' 
+                : undefined,
+              transition: (activeDragId === w.id || activeResizeId === w.id) ? 'none' : 'box-shadow 0.2s ease, border-color 0.2s ease',
+              borderTop: '3px solid #ff9900' // orange accent bar for AWS style!
             }}
             className="glass-panel"
           >
@@ -898,20 +922,29 @@ function WidgetContent({ widget, agents, recentAlerts }: ContentProps) {
               </tr>
             </thead>
             <tbody>
-              {filteredAlarms.slice(0, 15).map(a => (
-                <tr key={a.id}>
-                  <td style={{ color: 'var(--text-3)', fontFamily: "'IBM Plex Mono', monospace" }}>
-                    {new Date(a.timestamp).toLocaleTimeString('en-US', { hour12: false })}
-                  </td>
-                  <td>
-                    <span className={`badge badge-${a.severity}`} style={{ fontSize: '0.62rem', padding: '1px 4px' }}>
-                      {a.severity}
-                    </span>
-                  </td>
-                  <td style={{ fontWeight: 500 }}>{a.agentName}</td>
-                  <td title={a.description}>{a.title}</td>
-                </tr>
-              ))}
+              {filteredAlarms.slice(0, 15).map(a => {
+                const isCritical = a.severity === 'critical' || a.severity === 'high';
+                return (
+                  <tr 
+                    key={a.id} 
+                    style={{ 
+                      background: isCritical ? 'rgba(239, 68, 68, 0.06)' : undefined,
+                      borderLeft: isCritical ? '3px solid var(--critical)' : undefined
+                    }}
+                  >
+                    <td style={{ color: 'var(--text-3)', fontFamily: "'IBM Plex Mono', monospace" }}>
+                      {new Date(a.timestamp).toLocaleTimeString('en-US', { hour12: false })}
+                    </td>
+                    <td>
+                      <span className={`badge badge-${a.severity}`} style={{ fontSize: '0.62rem', padding: '1px 4px' }}>
+                        {a.severity}
+                      </span>
+                    </td>
+                    <td style={{ fontWeight: 500 }}>{a.agentName}</td>
+                    <td title={a.description} style={{ color: isCritical ? 'var(--text-0)' : 'var(--text-2)' }}>{a.title}</td>
+                  </tr>
+                );
+              })}
               {filteredAlarms.length === 0 && (
                 <tr>
                   <td colSpan={4} style={{ textAlign: 'center', padding: '20px 0', color: 'var(--text-3)' }}>
@@ -961,22 +994,32 @@ function WidgetContent({ widget, agents, recentAlerts }: ContentProps) {
             </tr>
           </thead>
           <tbody>
-            {logData.slice(0, 15).map(l => (
-              <tr key={l.id}>
-                <td style={{ color: 'var(--text-3)', fontFamily: "'IBM Plex Mono', monospace", whiteSpace: 'nowrap' }}>
-                  {new Date(l.timestamp).toLocaleTimeString('en-US', { hour12: false })}
-                </td>
-                <td style={{ fontWeight: 500, whiteSpace: 'nowrap' }}>{l.agentName}</td>
-                <td>
-                  <span className="badge badge-neutral" style={{ fontSize: '0.58rem', padding: '1px 3px' }}>
-                    {l.facility}
-                  </span>
-                </td>
-                <td style={{ fontFamily: "'IBM Plex Mono', monospace", color: 'var(--text-2)', fontSize: '0.72rem' }}>
-                  {l.message}
-                </td>
-              </tr>
-            ))}
+            {logData.slice(0, 15).map(l => {
+              const msgLower = l.message.toLowerCase();
+              const isAlert = msgLower.includes('fail') || msgLower.includes('err') || msgLower.includes('denied') || msgLower.includes('block') || msgLower.includes('alert') || msgLower.includes('warn');
+              return (
+                <tr 
+                  key={l.id} 
+                  style={{ 
+                    background: isAlert ? 'rgba(245, 158, 11, 0.05)' : undefined,
+                    borderLeft: isAlert ? '3px solid var(--warning)' : undefined
+                  }}
+                >
+                  <td style={{ color: 'var(--text-3)', fontFamily: "'IBM Plex Mono', monospace", whiteSpace: 'nowrap' }}>
+                    {new Date(l.timestamp).toLocaleTimeString('en-US', { hour12: false })}
+                  </td>
+                  <td style={{ fontWeight: 500, whiteSpace: 'nowrap' }}>{l.agentName}</td>
+                  <td>
+                    <span className="badge badge-neutral" style={{ fontSize: '0.58rem', padding: '1px 3px' }}>
+                      {l.facility}
+                    </span>
+                  </td>
+                  <td style={{ fontFamily: "'IBM Plex Mono', monospace", color: isAlert ? 'var(--text-0)' : 'var(--text-2)', fontSize: '0.72rem' }}>
+                    {l.message}
+                  </td>
+                </tr>
+              );
+            })}
             {logData.length === 0 && (
               <tr>
                 <td colSpan={4} style={{ textAlign: 'center', padding: '20px 0', color: 'var(--text-3)' }}>
@@ -1039,28 +1082,47 @@ function WidgetContent({ widget, agents, recentAlerts }: ContentProps) {
 
     // Gauge Style Widget
     if (widget.widgetType === 'Gauge') {
+      const needleRotation = -90 + (metricValue / 100) * 180;
       return (
         <div style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', position: 'relative' }}>
-          <svg width="120" height="70" viewBox="0 0 100 60" style={{ overflow: 'visible' }}>
-            {/* Background semi-circle */}
-            <path d="M 10 50 A 40 40 0 0 1 90 50" fill="none" stroke="var(--border-1)" strokeWidth="8" strokeLinecap="round" />
+          <svg width="130" height="75" viewBox="0 0 100 60" style={{ overflow: 'visible' }}>
+            {/* Background semi-circles zones */}
+            <path d="M 10 50 A 40 40 0 0 1 36.6 20" fill="none" stroke="#10b981" strokeWidth="6" opacity="0.25" strokeLinecap="round" />
+            <path d="M 36.6 20 A 40 40 0 0 1 63.3 20" fill="none" stroke="#f59e0b" strokeWidth="6" opacity="0.25" />
+            <path d="M 63.3 20 A 40 40 0 0 1 90 50" fill="none" stroke="#ef4444" strokeWidth="6" opacity="0.25" strokeLinecap="round" />
+            
             {/* Filled value semi-circle */}
             <path 
               d="M 10 50 A 40 40 0 0 1 90 50" 
               fill="none" 
               stroke={color} 
-              strokeWidth="8" 
+              strokeWidth="6" 
               strokeLinecap="round" 
               strokeDasharray="126" 
               strokeDashoffset={126 - (metricValue / 100) * 126}
               style={{ transition: 'stroke-dashoffset 0.8s ease-out' }}
             />
+            
+            {/* Needle pointer */}
+            <polygon 
+              points="49,50 51,50 50,16" 
+              fill="#ef4444" 
+              transform={`rotate(${needleRotation}, 50, 50)`} 
+              style={{ transformOrigin: '50px 50px', transition: 'transform 0.8s cubic-bezier(0.34, 1.56, 0.64, 1)' }} 
+            />
+            {/* Center Cap */}
+            <circle cx="50" cy="50" r="3.5" fill="var(--text-0)" />
+
+            {/* Min / Max Labels */}
+            <text x="8" y="58" textAnchor="middle" fill="var(--text-3)" fontSize="5">0</text>
+            <text x="92" y="58" textAnchor="middle" fill="var(--text-3)" fontSize="5">100</text>
+
             {/* Value text in middle */}
-            <text x="50" y="46" textAnchor="middle" fill="var(--text-0)" fontSize="14" fontWeight="bold">
+            <text x="50" y="44" textAnchor="middle" fill="var(--text-0)" fontSize="12" fontWeight="bold">
               {metricValue}{suffix}
             </text>
-            <text x="50" y="58" textAnchor="middle" fill="var(--text-3)" fontSize="6" fontWeight="600" letterSpacing="0.04em">
-              {widget.metricName?.toUpperCase()} RANGE
+            <text x="50" y="55" textAnchor="middle" fill="var(--text-3)" fontSize="5" fontWeight="700" letterSpacing="0.04em">
+              {widget.metricName?.toUpperCase()}
             </text>
           </svg>
         </div>
@@ -1069,36 +1131,67 @@ function WidgetContent({ widget, agents, recentAlerts }: ContentProps) {
 
     // Default Line chart style
     if (metricHistory.length > 0) {
+      const minVal = Math.min(...metricHistory);
       const maxVal = Math.max(...metricHistory, 10);
+      const avgVal = Math.round(metricHistory.reduce((s, x) => s + x, 0) / metricHistory.length);
+
       const points = metricHistory.map((val, idx) => {
         const x = 10 + (idx * (180 / 11));
-        const y = 80 - (val / maxVal) * 65;
+        const y = 70 - (val / maxVal) * 55; // margin offset
         return { x, y };
       });
       
-      const path = points.map((p, idx) => `${idx === 0 ? 'M' : 'L'} ${p.x} ${p.y}`).join(' ');
+      // Compute smooth cubic Bezier path
+      let bezierPath = '';
+      if (points.length > 0) {
+        bezierPath = `M ${points[0].x} ${points[0].y}`;
+        for (let i = 0; i < points.length - 1; i++) {
+          const p0 = points[i];
+          const p1 = points[i + 1];
+          const cpX1 = p0.x + (p1.x - p0.x) / 2;
+          const cpY1 = p0.y;
+          const cpX2 = p0.x + (p1.x - p0.x) / 2;
+          const cpY2 = p1.y;
+          bezierPath += ` C ${cpX1} ${cpY1}, ${cpX2} ${cpY2}, ${p1.x} ${p1.y}`;
+        }
+      }
+
+      const bezierAreaPath = bezierPath ? `${bezierPath} L ${points[points.length - 1].x} 80 L ${points[0].x} 80 Z` : '';
 
       return (
         <div style={{ flex: 1, display: 'flex', flexDirection: 'column', minHeight: 0 }}>
-          <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.68rem', color: 'var(--text-3)', marginBottom: 4 }}>
-            <span>Max: {maxVal}{suffix}</span>
-            <span style={{ color }}>Now: {metricValue}{suffix}</span>
-          </div>
           <div style={{ flex: 1, position: 'relative' }}>
             <svg width="100%" height="100%" viewBox="0 0 200 90" preserveAspectRatio="none">
+              <defs>
+                <linearGradient id={`gradient-${widget.id}`} x1="0" y1="0" x2="0" y2="1">
+                  <stop offset="0%" stopColor={color} stopOpacity="0.25" />
+                  <stop offset="100%" stopColor={color} stopOpacity="0" />
+                </linearGradient>
+              </defs>
               <line x1="0" y1="20" x2="200" y2="20" stroke="rgba(255,255,255,0.03)" strokeWidth="0.5" />
               <line x1="0" y1="50" x2="200" y2="50" stroke="rgba(255,255,255,0.03)" strokeWidth="0.5" />
               <line x1="0" y1="80" x2="200" y2="80" stroke="rgba(255,255,255,0.03)" strokeWidth="0.5" />
-              <path d={path} fill="none" stroke={color} strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+              {bezierPath && (
+                <>
+                  <path d={bezierPath} fill="none" stroke={color} strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+                  <path d={bezierAreaPath} fill={`url(#gradient-${widget.id})`} />
+                </>
+              )}
               {points.map((p, idx) => (
                 <circle 
                   key={idx} cx={p.x} cy={p.y} r="2" fill={color} 
                   style={{ cursor: 'pointer' }}
                 >
-                  <title>{`Val: ${metricHistory[idx]}`}</title>
+                  <title>{`Val: ${metricHistory[idx]}${suffix}`}</title>
                 </circle>
               ))}
             </svg>
+          </div>
+          {/* Detailed Min / Max / Avg summary row */}
+          <div style={{ display: 'flex', justifyContent: 'space-around', fontSize: '0.66rem', color: 'var(--text-3)', borderTop: '1px solid var(--border-0)', paddingTop: 6, marginTop: 4 }}>
+            <span>Min: <strong style={{ color: 'var(--text-1)' }}>{minVal}{suffix}</strong></span>
+            <span>Max: <strong style={{ color: 'var(--text-1)' }}>{maxVal}{suffix}</strong></span>
+            <span>Avg: <strong style={{ color: 'var(--text-1)' }}>{avgVal}{suffix}</strong></span>
           </div>
         </div>
       );

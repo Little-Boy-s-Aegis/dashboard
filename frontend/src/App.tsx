@@ -15,7 +15,7 @@ export default function App() {
   const [isAuthenticated, setIsAuthenticated] = useState<boolean | null>(null);
   const [isIpBanned, setIsIpBanned] = useState(false);
   const [user, setUser] = useState<string>('');
-  const [activeTab, setActiveTab] = useState<string>(() => localStorage.getItem('activeTab') || 'overview');
+  const [activeTab, setActiveTab] = useState<string>(() => localStorage.getItem('activeTab') || 'cloudwatch');
   const [timeRange, setTimeRange] = useState<string>(() => localStorage.getItem('timeRange') || '24h');
   const [summary, setSummary] = useState<DashboardSummary | null>(null);
   const [alerts, setAlerts] = useState<Alert[]>([]);
@@ -162,6 +162,7 @@ export default function App() {
   const totalActive = summary ? summary.criticalAlerts + summary.highAlerts : 0;
 
   const navItems = [
+    { key: 'cloudwatch', icon: Layout, label: 'Dashboard' },
     { key: 'overview', icon: Activity, label: 'Overview' },
     { key: 'alerts', icon: AlertTriangle, label: 'Alerts', badge: totalActive },
     { key: 'actions', icon: Zap, label: 'Response Center' },
@@ -169,7 +170,6 @@ export default function App() {
     { key: 'agents', icon: Monitor, label: 'Hosts' },
     { key: 'fim', icon: FileText, label: 'File Integrity' },
     { key: 'logs', icon: Terminal, label: 'Logs' },
-    { key: 'cloudwatch', icon: Layout, label: 'CloudWatch' },
   ];
 
   if (isIpBanned) {
