@@ -105,6 +105,12 @@ export default function AlertsManager({ alerts, onRefresh, initialMitreFilter, o
     if (initialMitreFilter) { setSearchQuery(initialMitreFilter); onClearMitreFilter?.(); }
   }, [initialMitreFilter, onClearMitreFilter]);
 
+  useEffect(() => {
+    if (selectedAlertId && !aiAnalysis[selectedAlertId]) {
+      handleAI(selectedAlertId);
+    }
+  }, [selectedAlertId]);
+
   const filtered = alerts.filter(a => {
     if (severityFilter && a.severity !== severityFilter) return false;
     if (categoryFilter && a.category !== categoryFilter) return false;
