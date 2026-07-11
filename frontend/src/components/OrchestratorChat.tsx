@@ -393,10 +393,13 @@ export default function OrchestratorChat({ agents }: Props) {
     return el.scrollHeight - el.clientHeight - el.scrollTop < 180;
   };
 
+  // Reset active highlighted message when tab changes
+  useEffect(() => {
+    setActiveMessageId(null);
+  }, [activeTab]);
+
   // Scroll to bottom of chat and json stream when messages change, but respect user scrolling
   useEffect(() => {
-    const chatEl = chatScrollContainerRef.current;
-    const jsonEl = jsonStreamRef.current;
     const msgCount = activeConv?.messages.length || 0;
 
     const tabChanged = prevTabRef.current !== activeTab;
@@ -406,12 +409,14 @@ export default function OrchestratorChat({ agents }: Props) {
     const shouldScroll = tabChanged || (newMsgAdded && isNearBottom());
 
     if (shouldScroll) {
-      if (chatEl) {
-        chatEl.scrollTop = chatEl.scrollHeight;
-      }
-      if (jsonEl) {
-        jsonEl.scrollTop = jsonEl.scrollHeight;
-      }
+      setTimeout(() => {
+        if (chatScrollContainerRef.current) {
+          chatScrollContainerRef.current.scrollTop = chatScrollContainerRef.current.scrollHeight;
+        }
+        if (jsonStreamRef.current) {
+          jsonStreamRef.current.scrollTop = jsonStreamRef.current.scrollHeight;
+        }
+      }, 50);
     }
 
     prevTabRef.current = activeTab;
