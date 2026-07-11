@@ -9,6 +9,7 @@ import (
 	"math/rand"
 	"net/http"
 	"os"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -61,14 +62,22 @@ func NotifySecurityAlert(alert *models.Alert) {
 
 func SecurityAlertSeverity(attackType string, status string, payload string, description string) string {
 	statusUpper := strings.ToUpper(strings.TrimSpace(status))
-	if IsSQLInjectionText(attackType, payload, description) {
-		if statusUpper == "ALLOWED" {
+	isSQLi := IsSQLInjectionText(attackType, payload, description)
+
+	if statusUpper == "ALLOWED" {
+		if isSQLi {
 			return "high"
 		}
-		return "medium"
-	}
-	if statusUpper == "ALLOWED" {
 		return "critical"
+	}
+
+	attackTypeUpper := strings.ToUpper(strings.TrimSpace(attackType))
+	if attackTypeUpper == "BRUTE_FORCE" || attackTypeUpper == "PARAMETER_TAMPERING" || attackTypeUpper == "XSS" || attackTypeUpper == "JSON_ESCAPING" {
+		return "low"
+	}
+
+	if isSQLi {
+		return "medium"
 	}
 	return "high"
 }
@@ -102,7 +111,7 @@ func ShouldPersistSecurityLog(entry *models.LogEntry) bool {
 		return true
 	}
 	switch strings.ToLower(strings.TrimSpace(entry.Severity)) {
-	case "critical", "high", "medium", "alert", "error":
+	case "critical", "high", "medium", "low", "alert", "error":
 		return true
 	default:
 		return false
@@ -166,7 +175,9 @@ func (db *Database) AddLog(entry *models.LogEntry) {
 	populateECSFields(entry)
 	db.Logs = append(db.Logs, entry)
 	if UsePostgres && ShouldPersistSecurityLog(entry) {
-		_ = SaveSQLLogEntry(entry)
+		go func(e *models.LogEntry) {
+			_ = SaveSQLLogEntry(e)
+		}(entry)
 	}
 }
 
@@ -176,14 +187,18 @@ func (db *Database) AddAlert(alert *models.Alert) {
 		db.Alerts = db.Alerts[len(db.Alerts)-100:]
 	}
 	if UsePostgres {
-		_ = SaveSQLAlert(alert)
+		go func(a *models.Alert) {
+			_ = SaveSQLAlert(a)
+		}(alert)
 	}
 }
 
 func (db *Database) AddFIMEvent(fim *models.FIMEvent) {
 	db.FIMEvents = append(db.FIMEvents, fim)
 	if UsePostgres {
-		_ = SaveSQLFIMEvent(fim)
+		go func(f *models.FIMEvent) {
+			_ = SaveSQLFIMEvent(f)
+		}(fim)
 	}
 }
 
@@ -292,7 +307,7 @@ func (db *Database) seedHistory() {
 		var path string
 		var user string
 		var proc string
-		var ev   string
+		var ev string
 
 		if isWindows {
 			winFimFiles := []struct {
@@ -543,20 +558,10 @@ func (db *Database) startSyncLoop() {
 			db.syncBankSecurityLogs()
 		case <-metricTicker.C:
 			db.Mu.Lock()
-			// Fluctuate CPU/RAM/Disk metrics slightly
+			// Keep storage/heartbeat moving; CPU/RAM are recalculated from threat state below.
 			for _, agent := range db.Agents {
-				if agent.Status == "active" {
-					agent.CPUUsage = clamp(agent.CPUUsage+rand.Float64()*10-5, 2.0, 95.0)
-					agent.RAMUsage = clamp(agent.RAMUsage+rand.Float64()*4-2, 10.0, 95.0)
-					agent.DiskUsage = clamp(agent.DiskUsage+rand.Float64()*0.1, 10.0, 99.0)
-					agent.LastSeen = time.Now()
-				} else if agent.Status == "alerting" {
-					// Alerting agents have higher CPU/RAM usage
-					agent.CPUUsage = clamp(agent.CPUUsage+rand.Float64()*10-3, 60.0, 99.0)
-					agent.RAMUsage = clamp(agent.RAMUsage+rand.Float64()*5-1, 75.0, 98.0)
-					agent.LastSeen = time.Now()
-				}
-				db.SaveAgent(agent)
+				agent.DiskUsage = clamp(agent.DiskUsage+rand.Float64()*0.1, 10.0, 99.0)
+				agent.LastSeen = time.Now()
 			}
 			db.updateAgentThreatsAndNetwork()
 			db.Mu.Unlock()
@@ -577,20 +582,10 @@ func (db *Database) startSimulator() {
 			db.syncBankSecurityLogs()
 		case <-metricTicker.C:
 			db.Mu.Lock()
-			// Fluctuate CPU/RAM/Disk metrics slightly
+			// Keep storage/heartbeat moving; CPU/RAM are recalculated from threat state below.
 			for _, agent := range db.Agents {
-				if agent.Status == "active" {
-					agent.CPUUsage = clamp(agent.CPUUsage+rand.Float64()*10-5, 2.0, 95.0)
-					agent.RAMUsage = clamp(agent.RAMUsage+rand.Float64()*4-2, 10.0, 95.0)
-					agent.DiskUsage = clamp(agent.DiskUsage+rand.Float64()*0.1, 10.0, 99.0)
-					agent.LastSeen = time.Now()
-				} else if agent.Status == "alerting" {
-					// Alerting agents have higher CPU/RAM usage
-					agent.CPUUsage = clamp(agent.CPUUsage+rand.Float64()*10-3, 60.0, 99.0)
-					agent.RAMUsage = clamp(agent.RAMUsage+rand.Float64()*5-1, 75.0, 98.0)
-					agent.LastSeen = time.Now()
-				}
-				db.SaveAgent(agent)
+				agent.DiskUsage = clamp(agent.DiskUsage+rand.Float64()*0.1, 10.0, 99.0)
+				agent.LastSeen = time.Now()
 			}
 			db.updateAgentThreatsAndNetwork()
 			db.Mu.Unlock()
@@ -687,6 +682,8 @@ func (db *Database) startSimulator() {
 					{"Suspicious Binary execution in /tmp", "A process was executed from /tmp directory which is writable by all users.", "T1059", []string{"Execution"}, "malware", "high"},
 					{"DNS Request to Dynamic DNS Provider", "Host queried a known dynamic DNS service, which is frequently used by C2 malware.", "T1071", []string{"Command and Control"}, "network", "medium"},
 					{"System File Permissions Modified", "Permissions of sensitive config files changed to 777.", "T1222", []string{"Defense Evasion"}, "fim", "high"},
+					{"ICMP Ping Sweep Detected", "Reconnaissance ping sweep targeting local subnet ranges.", "T1046", []string{"Discovery"}, "network", "low"},
+					{"Unoptimized Database Query Warning", "A query executed slow and consumed excessive system resources temporarily.", "T1496", []string{"Impact"}, "audit", "low"},
 				}
 				opt := options[rand.Intn(len(options))]
 
@@ -1000,11 +997,14 @@ func (db *Database) SimulateAttack(agentID string, attackType string) string {
 
 // Helper to calculate agent threat score and network throughput
 func (db *Database) updateAgentThreatsAndNetwork() {
-	// For each agent, calculate threat score based on its unresolved alerts
+	threatCutoff := time.Now().Add(-agentThreatWindow())
+
+	// For each agent, calculate threat score based on recent unresolved alerts.
+	// Old incident backlog should stay in the alert history without pinning host load at 100%.
 	for _, agent := range db.Agents {
 		score := 0
 		for _, alt := range db.Alerts {
-			if alt.AgentID == agent.ID && alt.Status != "resolved" {
+			if alt.AgentID == agent.ID && alt.Status != "resolved" && !alt.Timestamp.Before(threatCutoff) {
 				switch alt.Severity {
 				case "critical":
 					score += 50
@@ -1021,6 +1021,13 @@ func (db *Database) updateAgentThreatsAndNetwork() {
 			score = 100
 		}
 		agent.ThreatScore = score
+		if score > 0 {
+			agent.Status = "alerting"
+		} else if agent.Status == "alerting" {
+			agent.Status = "active"
+		}
+
+		db.updateAgentLoad(agent, score)
 
 		// Fluctuate network throughput based on threat level
 		if score >= 70 {
@@ -1036,7 +1043,67 @@ func (db *Database) updateAgentThreatsAndNetwork() {
 			agent.NetworkOut = clamp(agent.NetworkOut+rand.Float64()*2-1, 1.5, 12.0)
 			agent.NetworkIn = clamp(agent.NetworkIn+rand.Float64()*4-2, 2.0, 25.0)
 		}
+		db.SaveAgent(agent)
 	}
+}
+
+func agentThreatWindow() time.Duration {
+	raw := strings.TrimSpace(os.Getenv("AEGIS_AGENT_THREAT_WINDOW_MINUTES"))
+	if raw == "" {
+		return 30 * time.Minute
+	}
+	minutes, err := strconv.Atoi(raw)
+	if err != nil || minutes < 1 {
+		log.Printf("[DATABASE WARNING] Invalid AEGIS_AGENT_THREAT_WINDOW_MINUTES=%q; using 30 minutes", raw)
+		return 30 * time.Minute
+	}
+	return time.Duration(minutes) * time.Minute
+}
+
+func (db *Database) updateAgentLoad(agent *models.Agent, threatScore int) {
+	cpuTarget, ramTarget := baselineAgentLoad(agent.ID)
+	cpuMin, cpuMax := 2.0, 95.0
+	ramMin, ramMax := 10.0, 95.0
+
+	if threatScore >= 70 {
+		cpuTarget, ramTarget = 93.0, 92.0
+		cpuMin, cpuMax = 65.0, 99.0
+		ramMin, ramMax = 75.0, 98.0
+	} else if threatScore >= 30 {
+		cpuTarget, ramTarget = 72.0, 78.0
+		cpuMin, cpuMax = 45.0, 92.0
+		ramMin, ramMax = 55.0, 94.0
+	}
+
+	agent.CPUUsage = convergeMetric(agent.CPUUsage, cpuTarget, 14.0, 5.0, cpuMin, cpuMax)
+	agent.RAMUsage = convergeMetric(agent.RAMUsage, ramTarget, 10.0, 3.0, ramMin, ramMax)
+}
+
+func baselineAgentLoad(agentID string) (float64, float64) {
+	switch agentID {
+	case "agent-01":
+		return 24.5, 62.1
+	case "agent-02":
+		return 12.8, 45.4
+	case "agent-03":
+		return 8.4, 35.8
+	case "agent-04":
+		return 55.2, 81.3
+	case "agent-05":
+		return 1.5, 18.2
+	default:
+		return 20.0, 45.0
+	}
+}
+
+func convergeMetric(current, target, maxStep, jitter, min, max float64) float64 {
+	delta := target - current
+	if delta > maxStep {
+		delta = maxStep
+	} else if delta < -maxStep {
+		delta = -maxStep
+	}
+	return clamp(current+delta+rand.Float64()*jitter-jitter/2, min, max)
 }
 
 var lastIngestedBankLogID int64 = 0

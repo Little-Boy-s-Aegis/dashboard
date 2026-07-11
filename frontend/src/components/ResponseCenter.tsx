@@ -16,7 +16,7 @@ const ACTION_TYPES = ['Isolate Host', 'Block IP', 'Unblock IP', 'Terminate Proce
 
 export default function ResponseCenter({ agents, alerts, actions, timeRange, setTimeRange, onRefresh, currentUser }: Props) {
   const allowedActionTypes = currentUser ? ['Block IP', 'Unblock IP'] : ACTION_TYPES;
-  const [actor, setActor] = useState(currentUser ? `SOC (${currentUser})` : 'SOC (Sarah Connor)');
+  const [actor, setActor] = useState(currentUser ? `SOC (${currentUser})` : 'SOC Operator');
   const [actionType, setActionType] = useState(allowedActionTypes[0]);
   const [target, setTarget] = useState('');
   const [message, setMessage] = useState('');

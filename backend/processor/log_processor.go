@@ -101,10 +101,26 @@ func pushToDashboardStore(logEntry *models.LogEntry) {
 			subID = subID[len(subID)-4:]
 		}
 
+		severity := "critical"
+		if logEntry.ThreatType == "JSON_ESCAPING" {
+			severity = "low"
+		} else {
+			switch strings.ToLower(logEntry.Severity) {
+			case "alert":
+				severity = "critical"
+			case "error":
+				severity = "high"
+			case "warning":
+				severity = "medium"
+			case "info", "low":
+				severity = "low"
+			}
+		}
+
 		db.AddAlert(&models.Alert{
 			ID:             alertID,
 			RuleID:         fmt.Sprintf("rule-siem-%s", subID),
-			Severity:       "critical",
+			Severity:       severity,
 			Title:          fmt.Sprintf("SIEM Filter - %s Detected", logEntry.ThreatType),
 			Description:    fmt.Sprintf("An adversarial pattern was detected on service %s from IP %s. Category: %s", logEntry.Facility, logEntry.SourceIP, logEntry.ThreatType),
 			AgentID:        logEntry.AgentID,

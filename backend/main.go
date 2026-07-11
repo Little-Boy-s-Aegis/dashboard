@@ -213,6 +213,7 @@ func main() {
 	mux.HandleFunc("/api/soar/metrics", handlers.GetSoarMetrics)
 	mux.HandleFunc("/api/internal/soar/decision", handlers.HandleInternalSoarDecision)
 	mux.HandleFunc("/api/internal/ip-ban/check", handlers.HandleInternalIPBanCheck)
+	mux.HandleFunc("/api/internal/otp/latest", handlers.GetLatestOTP)
 	mux.HandleFunc("/api/settings", func(w http.ResponseWriter, r *http.Request) {
 		if r.Method == http.MethodOptions {
 			w.Header().Set("Access-Control-Allow-Origin", getAllowedOrigin(r))

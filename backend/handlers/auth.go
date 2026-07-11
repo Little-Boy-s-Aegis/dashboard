@@ -12,6 +12,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"time"
@@ -170,7 +171,15 @@ func isBruteForceVulnerable() bool {
 	if bankURL == "" {
 		bankURL = "http://be-backend:8080"
 	}
-	resp, err := client.Get(bankURL + "/api/admin/security/status")
+	req, err := http.NewRequest("GET", bankURL+"/api/admin/security/status", nil)
+	if err != nil {
+		return false
+	}
+	syncToken := os.Getenv("AEGIS_INTERNAL_TOKEN")
+	if syncToken != "" {
+		req.Header.Set("X-Aegis-Token", syncToken)
+	}
+	resp, err := client.Do(req)
 	if err != nil {
 		return false
 	}
@@ -285,18 +294,18 @@ func RequestToken(w http.ResponseWriter, r *http.Request) {
 				ExpiresAt: expiry,
 			}
 		}
-		// Write to a local file for operator retrieval without exposing secrets in Docker stdout/stderr logs
+		// Write to a temporary file outside the workspace to prevent repo tracking
 		otpMsg := fmt.Sprintf("[SECURITY AUTH OTP] Copy this SHA-256 token to login for UID %s (%s):\n--> %s\n", uid, username, token)
-		_ = os.WriteFile("otp.txt", []byte(otpMsg), 0600)
+		_ = os.WriteFile(filepath.Join(os.TempDir(), "otp.txt"), []byte(otpMsg), 0600)
 		log.Printf("[SECURITY AUTH OTP] Copy this SHA-256 token to login for UID %s (%s): %s", uid, username, token)
 		log.Printf("[SECURITY AUTH] One-time password generated for authentication request.")
 
 		if isVulnerable {
-			// Vulnerable mode: expose real username and token for valid UID
+			// Vulnerable mode: expose real username but do NOT leak token in response
 			writeJSON(w, http.StatusOK, models.AuthResponse{
 				UID:      uid,
 				Username: username,
-				Token:    token,
+				Token:    "",
 				Expiry:   expiry,
 			})
 			return
@@ -315,6 +324,66 @@ func RequestToken(w http.ResponseWriter, r *http.Request) {
 	// to prevent account enumeration. No uid/username/token/expiry fields are exposed.
 	writeJSON(w, http.StatusOK, map[string]string{
 		"message": "If the UID is valid, a one-time password has been generated. Check the secure OTP channel.",
+	})
+}
+
+// GET /api/internal/otp/latest — Fast OTP retrieval (bypasses CloudWatch)
+// Authenticated with X-Aegis-Internal-Key header.
+// Returns the latest OTP token directly from the local otp.txt file on the container.
+func GetLatestOTP(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Access-Control-Allow-Origin", getAllowedOrigin(r))
+	w.Header().Set("Access-Control-Allow-Credentials", "true")
+
+	if r.Method != http.MethodGet {
+		writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "Method not allowed"})
+		return
+	}
+
+	// Verify internal secret key
+	internalToken := os.Getenv("AEGIS_INTERNAL_TOKEN")
+	if internalToken == "" || r.Header.Get("X-Aegis-Internal-Key") != internalToken {
+		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "Unauthorized"})
+		return
+	}
+
+	// Read the otp.txt file directly from temporary directory
+	data, err := os.ReadFile(filepath.Join(os.TempDir(), "otp.txt"))
+	if err != nil {
+		writeJSON(w, http.StatusNotFound, map[string]string{
+			"error":   "No OTP token available. Request a token first via /api/auth/request-token",
+			"details": err.Error(),
+		})
+		return
+	}
+
+	content := strings.TrimSpace(string(data))
+
+	// Extract the token from the otp.txt format:
+	// [SECURITY AUTH OTP] Copy this SHA-256 token to login for UID XXXXX (username):
+	// --> <token>
+	lines := strings.Split(content, "\n")
+	var token string
+	var info string
+	for _, line := range lines {
+		line = strings.TrimSpace(line)
+		if strings.HasPrefix(line, "-->") {
+			token = strings.TrimSpace(strings.TrimPrefix(line, "-->"))
+		} else if strings.HasPrefix(line, "[SECURITY AUTH OTP]") {
+			info = line
+		}
+	}
+
+	if token == "" {
+		writeJSON(w, http.StatusNotFound, map[string]string{
+			"error": "Could not parse OTP token from otp.txt",
+			"raw":   content,
+		})
+		return
+	}
+
+	writeJSON(w, http.StatusOK, map[string]string{
+		"token": token,
+		"info":  info,
 	})
 }
 

@@ -7,8 +7,10 @@ import (
 	"net"
 	"net/netip"
 	"os"
+	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"dashboard/backend/models"
@@ -19,6 +21,54 @@ var (
 	SQL         *sql.DB
 	UsePostgres bool = false
 )
+
+// bannedIPCache eliminates per-request SQL queries for IP ban checks.
+// The cache refreshes every 5 seconds or when explicitly invalidated.
+var bannedIPCache struct {
+	mu          sync.RWMutex
+	list        []*models.BannedIP
+	lastRefresh time.Time
+	ttl         time.Duration
+}
+
+func init() {
+	bannedIPCache.ttl = 5 * time.Second
+}
+
+// InvalidateBannedIPCache forces the next IsIPBanned call to re-query the database.
+func InvalidateBannedIPCache() {
+	bannedIPCache.mu.Lock()
+	bannedIPCache.lastRefresh = time.Time{}
+	bannedIPCache.mu.Unlock()
+}
+
+// getCachedBannedIPs returns the cached banned IP list, refreshing from DB if stale.
+func getCachedBannedIPs() ([]*models.BannedIP, error) {
+	bannedIPCache.mu.RLock()
+	if time.Since(bannedIPCache.lastRefresh) < bannedIPCache.ttl && bannedIPCache.list != nil {
+		result := bannedIPCache.list
+		bannedIPCache.mu.RUnlock()
+		return result, nil
+	}
+	bannedIPCache.mu.RUnlock()
+
+	// Cache miss — refresh
+	bannedIPCache.mu.Lock()
+	defer bannedIPCache.mu.Unlock()
+
+	// Double-check after acquiring write lock
+	if time.Since(bannedIPCache.lastRefresh) < bannedIPCache.ttl && bannedIPCache.list != nil {
+		return bannedIPCache.list, nil
+	}
+
+	list, err := GetSQLBannedIPs()
+	if err != nil {
+		return nil, err
+	}
+	bannedIPCache.list = list
+	bannedIPCache.lastRefresh = time.Now()
+	return list, nil
+}
 
 // InitDB: Try to connect to PostgreSQL. If it fails, fall back to in-memory mode.
 func InitDB() {
@@ -255,6 +305,10 @@ func runMigrations() {
 
 		-- Indexes for FIM Events
 		CREATE INDEX IF NOT EXISTS idx_fim_events_agent_id_timestamp ON fim_events(agent_id, timestamp DESC);
+
+		-- Indexes for SOAR and ban registry hot paths
+		CREATE INDEX IF NOT EXISTS idx_action_logs_timestamp ON action_logs(timestamp DESC);
+		CREATE INDEX IF NOT EXISTS idx_action_logs_action_type_timestamp ON action_logs(action_type, timestamp DESC);
 	`)
 	if err != nil {
 		log.Fatalf("Migration failed (indexes): %v", err)
@@ -297,6 +351,7 @@ func runMigrations() {
 	_, err = SQL.Exec(`
 		ALTER TABLE banned_ips ALTER COLUMN ip_address TYPE VARCHAR(64);
 		CREATE INDEX IF NOT EXISTS idx_banned_ips_status ON banned_ips(status);
+		CREATE INDEX IF NOT EXISTS idx_banned_ips_status_banned_at ON banned_ips(status, banned_at DESC);
 	`)
 	if err != nil {
 		log.Printf("[DATABASE WARNING] Banned IP schema hardening skipped: %v", err)
@@ -350,7 +405,7 @@ func pruneOperationalData() {
 	if _, err := SQL.Exec(`
 		DELETE FROM log_entries
 		WHERE COALESCE(threat_flagged, FALSE) = FALSE
-		  AND lower(severity) NOT IN ('critical', 'high', 'medium', 'alert', 'error')
+		  AND lower(severity) NOT IN ('critical', 'high', 'medium', 'low', 'alert', 'error')
 	`); err != nil {
 		log.Printf("[DATABASE WARNING] Failed to prune non-threat log entries: %v", err)
 	}
@@ -610,6 +665,112 @@ func LoadSQLAlerts() ([]*models.Alert, error) {
 	return alerts, nil
 }
 
+func QuerySQLAlerts(severityFilter string, agentFilter string, statusFilter string, searchQuery string, limitVal int) ([]*models.Alert, error) {
+	if !UsePostgres {
+		return nil, fmt.Errorf("PostgreSQL is not enabled")
+	}
+	sqlQuery := `
+		SELECT id, rule_id, severity, title, description, agent_id, agent_name, mitre_technique, mitre_tactics, category, timestamp, raw_log, status, assignee
+		FROM alerts
+		WHERE 1=1
+	`
+	var args []interface{}
+	argCount := 1
+
+	if severityFilter != "" {
+		sqlQuery += fmt.Sprintf(" AND severity = $%d", argCount)
+		args = append(args, severityFilter)
+		argCount++
+	}
+
+	if agentFilter != "" {
+		sqlQuery += fmt.Sprintf(" AND agent_id = $%d", argCount)
+		args = append(args, agentFilter)
+		argCount++
+	}
+
+	if statusFilter != "" {
+		sqlQuery += fmt.Sprintf(" AND status = $%d", argCount)
+		args = append(args, statusFilter)
+		argCount++
+	}
+
+	if searchQuery != "" {
+		sqlQuery += fmt.Sprintf(" AND (lower(title) LIKE $%d OR lower(description) LIKE $%d OR lower(agent_name) LIKE $%d OR lower(mitre_technique) LIKE $%d OR lower(category) LIKE $%d)", argCount, argCount, argCount, argCount, argCount)
+		args = append(args, "%"+strings.ToLower(searchQuery)+"%")
+		argCount++
+	}
+
+	sqlQuery += fmt.Sprintf(" ORDER BY timestamp DESC, id DESC LIMIT $%d", argCount)
+	args = append(args, limitVal)
+
+	rows, err := SQL.Query(sqlQuery, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var alerts []*models.Alert
+	for rows.Next() {
+		var a models.Alert
+		var tacsStr string
+		err := rows.Scan(&a.ID, &a.RuleID, &a.Severity, &a.Title, &a.Description, &a.AgentID, &a.AgentName, &a.MITRETechnique, &tacsStr, &a.Category, &a.Timestamp, &a.RawLog, &a.Status, &a.Assignee)
+		if err != nil {
+			return nil, err
+		}
+		if tacsStr != "" {
+			a.MITRETactics = strings.Split(tacsStr, ",")
+		} else {
+			a.MITRETactics = []string{}
+		}
+		alerts = append(alerts, &a)
+	}
+	return alerts, nil
+}
+
+func QuerySQLSummaryStats(cutoff time.Time) (int, int, int, int, int, map[string]int, map[string]int, error) {
+	if !UsePostgres {
+		return 0, 0, 0, 0, 0, nil, nil, fmt.Errorf("PostgreSQL is not enabled")
+	}
+	rows, err := SQL.Query("SELECT severity, category, mitre_technique FROM alerts WHERE timestamp >= $1", cutoff)
+	if err != nil {
+		return 0, 0, 0, 0, 0, nil, nil, err
+	}
+	defer rows.Close()
+
+	var total int
+	var crit, high, med, low int
+	byCategory := make(map[string]int)
+	mitre := make(map[string]int)
+
+	for rows.Next() {
+		var sev, cat, mitreTech sql.NullString
+		if err := rows.Scan(&sev, &cat, &mitreTech); err != nil {
+			return 0, 0, 0, 0, 0, nil, nil, err
+		}
+		total++
+		if sev.Valid {
+			switch strings.ToLower(sev.String) {
+			case "critical":
+				crit++
+			case "high":
+				high++
+			case "medium":
+				med++
+			case "low":
+				low++
+			}
+		}
+		if cat.Valid && cat.String != "" {
+			byCategory[cat.String]++
+		}
+		if mitreTech.Valid && mitreTech.String != "" {
+			mitre[mitreTech.String]++
+		}
+	}
+	return total, crit, high, med, low, byCategory, mitre, nil
+}
+
 func LoadSQLFIMEvents() ([]*models.FIMEvent, error) {
 	rows, err := SQL.Query("SELECT id, timestamp, agent_id, agent_name, file_path, event_type, size, md5, sha256, user_name, process_name FROM fim_events ORDER BY timestamp ASC")
 	if err != nil {
@@ -643,6 +804,68 @@ func LoadSQLLogEntries() ([]*models.LogEntry, error) {
 		) recent
 		ORDER BY timestamp ASC, id ASC
 	`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var logs []*models.LogEntry
+	for rows.Next() {
+		var l models.LogEntry
+		var catStr string
+		err := rows.Scan(&l.ID, &l.Timestamp, &l.AgentID, &l.AgentName, &l.Facility, &l.Severity, &l.Message, &l.SourceIP, &l.StatusCode, &l.GeoIP, &l.ASN, &l.AssetCritical, &l.ThreatFlagged, &l.ThreatType, &l.DecodedPayload, &l.ECSTimestamp, &l.ECSLogLevel, &l.ECSEventDataset, &l.ECSEventID, &l.ECSSourceIP, &l.ECSHTTPStatus, &l.ECSGeoCountry, &l.ECSASNName, &l.ECSServiceName, &l.ECSURLOriginal, &l.ECSAgentID, &l.ECSAgentName, &l.ECSAgentType, &catStr, &l.ECSEventKind, &l.ECSEventOutcome)
+		if err != nil {
+			return nil, err
+		}
+		if catStr != "" {
+			l.ECSEventCat = strings.Split(catStr, ",")
+		} else {
+			l.ECSEventCat = []string{}
+		}
+		logs = append(logs, &l)
+	}
+	return logs, nil
+}
+
+func QuerySQLLogEntries(searchQuery string, agentFilter string, facilityFilter string, actorFilter string, limitVal int) ([]*models.LogEntry, error) {
+	sqlQuery := `
+		SELECT id, timestamp, agent_id, agent_name, facility, severity, message, source_ip, status_code, geo_ip, asn, asset_critical, threat_flagged, threat_type, decoded_payload, ecs_timestamp, ecs_log_level, ecs_event_dataset, ecs_event_id, ecs_source_ip, ecs_http_status, ecs_geo_country, ecs_asn_name, ecs_service_name, ecs_url_original, ecs_agent_id, ecs_agent_name, ecs_agent_type, ecs_event_category, ecs_event_kind, ecs_event_outcome
+		FROM log_entries
+		WHERE 1=1
+	`
+	var args []interface{}
+	argCount := 1
+
+	if agentFilter != "" {
+		sqlQuery += fmt.Sprintf(" AND agent_id = $%d", argCount)
+		args = append(args, agentFilter)
+		argCount++
+	}
+
+	if facilityFilter != "" {
+		sqlQuery += fmt.Sprintf(" AND facility = $%d", argCount)
+		args = append(args, facilityFilter)
+		argCount++
+	}
+
+	if actorFilter == "soc" {
+		sqlQuery += " AND agent_name LIKE 'SOC (%'"
+	} else if actorFilter == "ai" {
+		sqlQuery += " AND agent_name LIKE 'SOAR%'"
+	} else if actorFilter == "system" {
+		sqlQuery += " AND agent_name NOT LIKE 'SOC (%' AND agent_name NOT LIKE 'SOAR%'"
+	}
+
+	if searchQuery != "" {
+		sqlQuery += fmt.Sprintf(" AND (lower(message) LIKE $%d OR lower(facility) LIKE $%d OR lower(agent_name) LIKE $%d OR lower(severity) LIKE $%d)", argCount, argCount, argCount, argCount)
+		args = append(args, "%"+strings.ToLower(searchQuery)+"%")
+		argCount++
+	}
+
+	sqlQuery += fmt.Sprintf(" ORDER BY timestamp DESC, id DESC LIMIT $%d", argCount)
+	args = append(args, limitVal)
+
+	rows, err := SQL.Query(sqlQuery, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -751,6 +974,7 @@ func SaveSQLBannedIP(ip string, actor string, status string, reason string) erro
 	if err != nil {
 		log.Printf("[DATABASE ERROR] Failed to save banned IP: %v", err)
 	}
+	InvalidateBannedIPCache()
 	return err
 }
 
@@ -768,24 +992,56 @@ func ClearSQLBannedIPs() error {
 	if err != nil {
 		log.Printf("[DATABASE ERROR] Failed to delete all banned IPs: %v", err)
 	}
+	InvalidateBannedIPCache()
 	return err
 }
 
 func GetSQLBannedIPs() ([]*models.BannedIP, error) {
+	return QuerySQLBannedIPs("", 0)
+}
+
+func QuerySQLBannedIPs(searchQuery string, limitVal int) ([]*models.BannedIP, error) {
+	searchQuery = strings.TrimSpace(searchQuery)
 	if DB != nil && !UsePostgres {
 		DB.Mu.RLock()
 		defer DB.Mu.RUnlock()
 		list := make([]*models.BannedIP, 0, len(DB.BannedIPs))
 		for _, b := range DB.BannedIPs {
+			if b.Status != "active" || !bannedIPMatchesSearch(b, searchQuery) {
+				continue
+			}
 			copy := *b
 			list = append(list, &copy)
+		}
+		sort.Slice(list, func(i, j int) bool {
+			return list[i].BannedAt.After(list[j].BannedAt)
+		})
+		if limitVal > 0 && len(list) > limitVal {
+			list = list[:limitVal]
 		}
 		return list, nil
 	}
 	if !UsePostgres {
 		return []*models.BannedIP{}, nil
 	}
-	rows, err := SQL.Query("SELECT ip_address, banned_at, banned_by, status, reason FROM banned_ips WHERE status = 'active' ORDER BY banned_at DESC")
+
+	sqlQuery := "SELECT ip_address, banned_at, banned_by, status, reason FROM banned_ips WHERE status = 'active'"
+	var args []interface{}
+	argCount := 1
+
+	if searchQuery != "" {
+		sqlQuery += fmt.Sprintf(" AND (ip_address ILIKE $%d OR reason ILIKE $%d OR banned_by ILIKE $%d)", argCount, argCount, argCount)
+		args = append(args, "%"+searchQuery+"%")
+		argCount++
+	}
+
+	sqlQuery += " ORDER BY banned_at DESC"
+	if limitVal > 0 {
+		sqlQuery += fmt.Sprintf(" LIMIT $%d", argCount)
+		args = append(args, limitVal)
+	}
+
+	rows, err := SQL.Query(sqlQuery, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -806,13 +1062,57 @@ func GetSQLBannedIPs() ([]*models.BannedIP, error) {
 	return list, nil
 }
 
+func CountSQLBannedIPs(searchQuery string) (int, error) {
+	searchQuery = strings.TrimSpace(searchQuery)
+	if DB != nil && !UsePostgres {
+		DB.Mu.RLock()
+		defer DB.Mu.RUnlock()
+		count := 0
+		for _, b := range DB.BannedIPs {
+			if b.Status == "active" && bannedIPMatchesSearch(b, searchQuery) {
+				count++
+			}
+		}
+		return count, nil
+	}
+	if !UsePostgres {
+		return 0, nil
+	}
+
+	sqlQuery := "SELECT COUNT(*) FROM banned_ips WHERE status = 'active'"
+	var args []interface{}
+	argCount := 1
+
+	if searchQuery != "" {
+		sqlQuery += fmt.Sprintf(" AND (ip_address ILIKE $%d OR reason ILIKE $%d OR banned_by ILIKE $%d)", argCount, argCount, argCount)
+		args = append(args, "%"+searchQuery+"%")
+	}
+
+	var count int
+	if err := SQL.QueryRow(sqlQuery, args...).Scan(&count); err != nil {
+		return 0, err
+	}
+	return count, nil
+}
+
+func bannedIPMatchesSearch(b *models.BannedIP, searchQuery string) bool {
+	if searchQuery == "" {
+		return true
+	}
+	q := strings.ToLower(searchQuery)
+	return strings.Contains(strings.ToLower(b.IPAddress), q) ||
+		strings.Contains(strings.ToLower(b.Reason), q) ||
+		strings.Contains(strings.ToLower(b.BannedBy), q)
+}
+
 func IsIPBanned(rawIP string) (bool, error) {
 	addr, ok := parseAddr(rawIP)
 	if !ok {
 		return false, nil
 	}
 
-	bans, err := GetSQLBannedIPs()
+	// Use cached banned IPs instead of querying DB every request
+	bans, err := getCachedBannedIPs()
 	if err != nil {
 		return false, err
 	}

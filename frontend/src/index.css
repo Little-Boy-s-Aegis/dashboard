@@ -20,15 +20,15 @@
   --critical-dim: #FDA4AF;
 
   --high: #F59E0B;
-  --high-bg: rgba(245, 158, 11, 0.08);
+  --high-bg: rgba(245, 158, 11, 0.10);
   --high-dim: #FDE68A;
 
-  --medium: #EAB308;
-  --medium-bg: rgba(234, 179, 8, 0.06);
-  --medium-dim: #FEF08A;
+  --medium: #FB923C;
+  --medium-bg: rgba(251, 146, 60, 0.10);
+  --medium-dim: #FDBA74;
 
-  --low: #10B981;
-  --low-bg: rgba(16, 185, 129, 0.08);
+  --low: #34D399;
+  --low-bg: rgba(52, 211, 153, 0.10);
   --low-dim: #A7F3D0;
 
   --info: #38BDF8;

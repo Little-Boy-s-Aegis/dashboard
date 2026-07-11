@@ -22,9 +22,10 @@ interface Props {
   onRefresh: () => void;
   initialMitreFilter?: string | null;
   onClearMitreFilter?: () => void;
+  currentUser?: string;
 }
 
-export default function AlertsManager({ alerts, onRefresh, initialMitreFilter, onClearMitreFilter }: Props) {
+export default function AlertsManager({ alerts, onRefresh, initialMitreFilter, onClearMitreFilter, currentUser }: Props) {
   const [selectedAlertId, setSelectedAlertId] = useState<string | null>(null);
   const [severityFilter, setSeverityFilter] = useState('');
   const [categoryFilter, setCategoryFilter] = useState('');
@@ -35,7 +36,7 @@ export default function AlertsManager({ alerts, onRefresh, initialMitreFilter, o
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [bannedIps, setBannedIps] = useState<string[]>([]);
   const [banningIp, setBanningIp] = useState<string | null>(null);
-  const [analysts, setAnalysts] = useState<string[]>(['admin', 'sarah', 'alex', 'AI Copilot']);
+  const [analysts, setAnalysts] = useState<string[]>([]);
 
   const fetchBannedIps = async () => {
     try {
@@ -102,7 +103,7 @@ export default function AlertsManager({ alerts, onRefresh, initialMitreFilter, o
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          actor: 'SOC (admin)',
+          actor: currentUser ? `SOC (${currentUser})` : 'SOC Operator',
           actionType: 'Unblock IP',
           target: ip,
           message: 'Quick unban from Alerts & Incidents table'
@@ -171,7 +172,7 @@ export default function AlertsManager({ alerts, onRefresh, initialMitreFilter, o
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
-            actor: 'SOC (admin)',
+            actor: currentUser ? `SOC (${currentUser})` : 'SOC Operator',
             actionType: 'Unblock IP',
             target: ip,
             message: 'Auto unban on resolving alert'

@@ -30,13 +30,13 @@ const DEFAULT_WIDGETS: Widget[] = [
   {
     id: 'w-cpu-prod-01',
     x: 0, y: 0, w: 6, h: 6,
-    title: 'Web-Prod-01 CPU Utilization',
+    title: 'Primary Host CPU Utilization',
     dataSource: 'CloudWatch',
     dataType: 'Metrics',
     experience: 'Console',
     widgetType: 'Line',
     metricName: 'cpu',
-    agentId: 'agent-01'
+    agentId: ''
   },
   {
     id: 'w-active-alarms',
@@ -63,13 +63,13 @@ const DEFAULT_WIDGETS: Widget[] = [
   {
     id: 'w-threat-gauge',
     x: 8, y: 6, w: 4, h: 6,
-    title: 'Web-Prod-01 Threat Score',
+    title: 'Primary Host Threat Score',
     dataSource: 'CloudWatch',
     dataType: 'Metrics',
     experience: 'Console',
     widgetType: 'Gauge',
     metricName: 'threat',
-    agentId: 'agent-01'
+    agentId: ''
   },
   {
     id: 'w-system-status',
@@ -485,10 +485,10 @@ export default function CloudWatchDashboard({ agents, recentAlerts }: Props) {
         <div>
           <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
             <span style={{ fontSize: '0.72rem', color: 'var(--text-3)', fontFamily: "'IBM Plex Mono', monospace" }}>AWS / CLOUDWATCH</span>
-            <span style={{ fontSize: '0.65rem', background: 'rgba(235,133,0,0.15)', color: '#ff9900', border: '1px solid rgba(235,133,0,0.3)', padding: '1px 4px', borderRadius: 2 }}>Singapore</span>
+            <span style={{ fontSize: '0.65rem', background: 'rgba(235,133,0,0.15)', color: '#ff9900', border: '1px solid rgba(235,133,0,0.3)', padding: '1px 4px', borderRadius: 2 }}>{agents.length > 0 ? `${agents.length} Hosts` : 'Loading...'}</span>
           </div>
           <h1 className="page-title" style={{ fontSize: '1.25rem', marginTop: 3, display: 'flex', alignItems: 'center', gap: 8 }}>
-            <Layout size={18} style={{ color: '#ff9900' }} /> ai-native-soc-hackathon-soc
+            <Layout size={18} style={{ color: '#ff9900' }} /> Aegis SOC Dashboard
             <span style={{ fontSize: '0.8rem', color: 'var(--text-3)', fontWeight: 400 }}>· Dashboard</span>
           </h1>
         </div>
@@ -525,7 +525,7 @@ export default function CloudWatchDashboard({ agents, recentAlerts }: Props) {
                 <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, zIndex: 90 }} onClick={() => setIsDropdownOpen(false)} />
                 <div className="glass-panel" style={{ position: 'absolute', right: 0, top: 34, width: 180, zIndex: 100, padding: 6, display: 'flex', flexDirection: 'column', gap: 4 }}>
                   <button 
-                    onClick={() => { alert('AWS CloudWatch Dashboard Settings: Region = ap-southeast-1, Owner = 080641082881'); setIsDropdownOpen(false); }} 
+                    onClick={() => { alert(`Aegis Dashboard Metadata: Hosts = ${agents.length}, Active Alerts = ${recentAlerts.filter(a => a.status !== 'resolved').length}`); setIsDropdownOpen(false); }} 
                     style={{ background: 'transparent', border: 'none', color: 'var(--text-1)', fontSize: '0.78rem', padding: '6px 8px', textAlign: 'left', cursor: 'pointer', borderRadius: 4, width: '100%' }}
                     className="hover-card"
                   >
@@ -1038,7 +1038,7 @@ function WidgetContent({ widget, agents, recentAlerts }: ContentProps) {
   const [logData, setLogData] = useState<any[]>([]);
   const [metricHistory, setMetricHistory] = useState<number[]>([]);
 
-  const targetAgent = agents.find(a => a.id === widget.agentId);
+  const targetAgent = widget.agentId ? agents.find(a => a.id === widget.agentId) : agents[0];
 
   // Generate a mock metric history series based on current real-time agent metrics or system metrics
   useEffect(() => {

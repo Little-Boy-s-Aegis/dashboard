@@ -34,7 +34,7 @@ interface Conversation {
 }
 
 export default function OrchestratorChat({ agents }: Props) {
-  const [activeTab, setActiveTab] = useState<string>(() => agents[0]?.id || 'agent-01');
+  const [activeTab, setActiveTab] = useState<string>(() => agents[0]?.id || '');
   const [userInput, setUserInput] = useState<string>('');
   const [isTyping, setIsTyping] = useState<boolean>(false);
   const [expandedDetailsId, setExpandedDetailsId] = useState<string | null>(null);
@@ -695,12 +695,14 @@ export default function OrchestratorChat({ agents }: Props) {
             const lastMsg = conv.messages[conv.messages.length - 1];
             
             // Get threat tag color
+            const agentData = agents.find(a => a.id === conv.agentId);
+            const agentThreat = agentData?.threatScore ?? 0;
             let threatColor = '#10b981';
             let threatBg = 'rgba(16,185,129,0.1)';
-            if (conv.agentId === 'agent-01') {
+            if (agentThreat >= 70) {
               threatColor = 'var(--critical)';
               threatBg = 'rgba(239,68,68,0.1)';
-            } else if (conv.agentId === 'agent-03') {
+            } else if (agentThreat >= 40) {
               threatColor = 'var(--warning)';
               threatBg = 'rgba(245,158,11,0.1)';
             }
@@ -737,7 +739,7 @@ export default function OrchestratorChat({ agents }: Props) {
                     borderRadius: 3, 
                     fontWeight: 600 
                   }}>
-                    THREAT: {conv.agentId === 'agent-01' ? '85/100' : conv.agentId === 'agent-03' ? '50/100' : '15/100'}
+                    THREAT: {agentThreat}/100
                   </span>
                 </div>
                 

@@ -36,6 +36,11 @@ export default function App() {
     const verify = async () => {
       try {
         const res = await fetch('/api/auth/check');
+        if (res.status === 403) {
+          setIsAuthenticated(false);
+          setIsIpBanned(true);
+          return;
+        }
         if (res.ok) {
           const data = await res.json();
           setIsAuthenticated(data.isAuthenticated);
@@ -79,8 +84,18 @@ export default function App() {
     if (isAuthenticated !== true) return;
     try {
       const [summaryRes, alertsRes, agentsRes, fimRes, actionsRes] = await Promise.allSettled([
-        fetch('/api/summary'), fetch('/api/alerts'), fetch('/api/agents'), fetch('/api/fim'), fetch('/api/actions')
+        fetch('/api/summary'), fetch('/api/alerts?limit=500'), fetch('/api/agents'), fetch('/api/fim'), fetch('/api/actions?limit=300')
       ]);
+
+      const hasForbidden = [summaryRes, alertsRes, agentsRes, fimRes, actionsRes].some(
+        res => res.status === 'fulfilled' && res.value.status === 403
+      );
+      if (hasForbidden) {
+        setUser('');
+        setIsAuthenticated(false);
+        setIsIpBanned(true);
+        return;
+      }
 
       const hasUnauthorized = [summaryRes, alertsRes, agentsRes, fimRes, actionsRes].some(
         res => res.status === 'fulfilled' && res.value.status === 401
@@ -101,7 +116,7 @@ export default function App() {
   useEffect(() => {
     if (isAuthenticated === true) {
       refreshAllData();
-      const interval = setInterval(refreshAllData, 3000);
+      const interval = setInterval(refreshAllData, 5000);
       return () => clearInterval(interval);
     }
   }, [isAuthenticated]);
@@ -111,7 +126,12 @@ export default function App() {
     if (isAuthenticated === true) {
       const banCheckInterval = setInterval(async () => {
         try {
-          await fetch('/api/auth/check');
+          const res = await fetch('/api/auth/check');
+          if (res.status === 403) {
+            setUser('');
+            setIsAuthenticated(false);
+            setIsIpBanned(true);
+          }
         } catch (e) {
           // Ignore network errors during fast checking
         }
@@ -139,7 +159,7 @@ export default function App() {
           onSimulate={refreshAllData} />;
       case 'alerts':
         return <AlertsManager alerts={alerts} onRefresh={refreshAllData}
-          initialMitreFilter={alertsFilterMitreId} onClearMitreFilter={() => setAlertsFilterMitreId(null)} />;
+          initialMitreFilter={alertsFilterMitreId} onClearMitreFilter={() => setAlertsFilterMitreId(null)} currentUser={user} />;
       case 'actions':
         return <ResponseCenter agents={agents} alerts={alerts} actions={actions}
           timeRange={timeRange} setTimeRange={setTimeRange} onRefresh={refreshAllData}
@@ -161,8 +181,9 @@ export default function App() {
     }
   };
 
-  const isAlerting = summary && (summary.criticalAlerts > 0 || summary.highAlerts > 0 || summary.threatLevel === 'Severe' || summary.threatLevel === 'Elevated');
-  const totalActive = summary ? summary.criticalAlerts + summary.highAlerts : 0;
+  const activeAlerts = alerts.filter(a => a.status !== 'resolved');
+  const isAlerting = activeAlerts.some(a => a.severity === 'critical' || a.severity === 'high') || (summary && (summary.threatLevel === 'Severe' || summary.threatLevel === 'Elevated'));
+  const totalActive = activeAlerts.length;
 
   const navItems = [
     { key: 'cloudwatch', icon: Layout, label: 'Dashboard' },
