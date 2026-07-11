@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { Shield, AlertTriangle, Monitor, FileText, Terminal, Activity, Clock, Zap, LogOut, User, RefreshCw, Cpu } from 'lucide-react';
+import { Shield, AlertTriangle, Monitor, FileText, Terminal, Activity, Clock, Zap, LogOut, User, RefreshCw, Cpu, Layout } from 'lucide-react';
 import type { Agent, Alert, FIMEvent, DashboardSummary, ActionLog } from './types';
 import DashboardOverview from './components/DashboardOverview';
 import AlertsManager from './components/AlertsManager';
@@ -9,6 +9,7 @@ import LogExplorer from './components/LogExplorer';
 import ResponseCenter from './components/ResponseCenter';
 import SoarPerformanceDashboard from './components/SoarPerformanceDashboard';
 import Login from './components/Login';
+import CloudWatchDashboard from './components/CloudWatchDashboard';
 
 export default function App() {
   const [isAuthenticated, setIsAuthenticated] = useState<boolean | null>(null);
@@ -150,6 +151,8 @@ export default function App() {
         return <FimDashboard fimEvents={fimEvents} onRefresh={refreshAllData} />;
       case 'logs':
         return <LogExplorer onRefresh={refreshAllData} />;
+      case 'cloudwatch':
+        return <CloudWatchDashboard agents={agents} recentAlerts={alerts} />;
       default:
         return <div style={{ padding: 40, textAlign: 'center' }}><h2>Not Found</h2></div>;
     }
@@ -166,6 +169,7 @@ export default function App() {
     { key: 'agents', icon: Monitor, label: 'Hosts' },
     { key: 'fim', icon: FileText, label: 'File Integrity' },
     { key: 'logs', icon: Terminal, label: 'Logs' },
+    { key: 'cloudwatch', icon: Layout, label: 'CloudWatch' },
   ];
 
   if (isIpBanned) {
