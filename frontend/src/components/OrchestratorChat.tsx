@@ -308,7 +308,7 @@ export default function OrchestratorChat({ agents }: Props) {
           }
 
           realMsgList.push({
-            id: `real-action-${matchedAction.id}`,
+            id: `real-action-${alert.id}-${matchedAction.id}`,
             sender: 'orchestrator',
             senderName: 'L2 SOAR Orchestrator (AI Triage)',
             timestamp: new Date(actionTime).toISOString(),
@@ -793,10 +793,10 @@ export default function OrchestratorChat({ agents }: Props) {
                       <div
                         style={{
                           background: isHighlighted
-                            ? 'rgba(255, 153, 0, 0.16)'
+                            ? (isOrchestrator ? 'rgba(255, 153, 0, 0.16)' : 'rgba(56, 189, 248, 0.16)')
                             : (isOrchestrator ? 'rgba(255, 153, 0, 0.08)' : 'rgba(255,255,255,0.03)'),
                           border: isHighlighted
-                            ? '1px solid #ff9900'
+                            ? (isOrchestrator ? '1px solid #ff9900' : '1px solid #38bdf8')
                             : (isOrchestrator ? '1px solid rgba(255, 153, 0, 0.25)' : '1px solid var(--border-0)'),
                           borderRadius: 'var(--r-md)',
                           padding: '10px 12px',
@@ -804,7 +804,7 @@ export default function OrchestratorChat({ agents }: Props) {
                           color: 'var(--text-1)',
                           lineHeight: 1.4,
                           boxShadow: isHighlighted
-                            ? '0 0 12px rgba(255, 153, 0, 0.25)'
+                            ? (isOrchestrator ? '0 0 12px rgba(255, 153, 0, 0.35)' : '0 0 12px rgba(56, 189, 248, 0.35)')
                             : (isOrchestrator ? '0 4px 12px rgba(255, 153, 0, 0.03)' : '0 4px 12px rgba(0,0,0,0.05)'),
                           transition: 'all 0.15s ease',
                           cursor: 'pointer'
@@ -999,9 +999,15 @@ export default function OrchestratorChat({ agents }: Props) {
                           onClick={() => setActiveMessageId(m.id)}
                           style={{ 
                             fontSize: '0.62rem', 
-                            color: isHighlighted ? '#ff9900' : 'rgba(255,255,255,0.22)', 
-                            background: isHighlighted ? 'rgba(255, 153, 0, 0.05)' : 'rgba(255,255,255,0.01)', 
-                            border: isHighlighted ? '1px solid rgba(255, 153, 0, 0.4)' : '1px dashed rgba(255,255,255,0.02)', 
+                            color: isHighlighted 
+                              ? (isOrchestrator ? '#ff9900' : '#38bdf8')
+                              : 'rgba(255,255,255,0.22)', 
+                            background: isHighlighted 
+                              ? (isOrchestrator ? 'rgba(255, 153, 0, 0.05)' : 'rgba(56, 189, 248, 0.05)') 
+                              : 'rgba(255,255,255,0.01)', 
+                            border: isHighlighted 
+                              ? (isOrchestrator ? '1px solid rgba(255, 153, 0, 0.4)' : '1px solid rgba(56, 189, 248, 0.4)') 
+                              : '1px dashed rgba(255,255,255,0.02)', 
                             borderRadius: 4, 
                             padding: '6px 10px',
                             display: 'flex',
@@ -1009,7 +1015,9 @@ export default function OrchestratorChat({ agents }: Props) {
                             alignItems: 'center',
                             cursor: 'pointer',
                             transition: 'all 0.15s ease',
-                            boxShadow: isHighlighted ? '0 0 8px rgba(255, 153, 0, 0.15)' : 'none',
+                            boxShadow: isHighlighted 
+                              ? (isOrchestrator ? '0 0 8px rgba(255, 153, 0, 0.15)' : '0 0 8px rgba(56, 189, 248, 0.15)') 
+                              : 'none',
                             opacity: activeMessageId && !isHighlighted ? 0.6 : 1
                           }}
                         >
@@ -1033,8 +1041,12 @@ export default function OrchestratorChat({ agents }: Props) {
                         onClick={() => setActiveMessageId(m.id)}
                         style={{ 
                           fontSize: '0.66rem', 
-                          background: isHighlighted ? 'rgba(255, 153, 0, 0.04)' : 'rgba(255,255,255,0.01)', 
-                          border: isHighlighted ? '1px solid #ff9900' : '1px solid rgba(255,255,255,0.04)', 
+                          background: isHighlighted 
+                            ? (isOrchestrator ? 'rgba(255, 153, 0, 0.04)' : 'rgba(56, 189, 248, 0.04)') 
+                            : 'rgba(255,255,255,0.01)', 
+                          border: isHighlighted 
+                            ? (isOrchestrator ? '1px solid #ff9900' : '1px solid #38bdf8') 
+                            : '1px solid rgba(255,255,255,0.04)', 
                           borderRadius: 4, 
                           padding: 10,
                           display: 'flex',
@@ -1042,7 +1054,9 @@ export default function OrchestratorChat({ agents }: Props) {
                           gap: 6,
                           cursor: 'pointer',
                           transition: 'all 0.15s ease',
-                          boxShadow: isHighlighted ? '0 0 12px rgba(255, 153, 0, 0.25)' : 'none',
+                          boxShadow: isHighlighted 
+                            ? (isOrchestrator ? '0 0 12px rgba(255, 153, 0, 0.25)' : '0 0 12px rgba(56, 189, 248, 0.25)') 
+                            : 'none',
                           opacity: activeMessageId && !isHighlighted ? 0.6 : 1
                         }}
                       >
