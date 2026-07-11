@@ -20,15 +20,11 @@ export default function FimDashboard({ fimEvents, onRefresh }: Props) {
     return { background: 'var(--medium-bg)', color: 'var(--medium-dim)' };
   };
 
-  const getDiff = (p: string, eventType: string) => {
+  const getDiff = (event: FIMEvent) => {
+    const p = event.filePath;
     const filename = p.split(/[\\/]/).pop() || p;
+    const eventType = event.eventType;
     
-    if (p.includes('passwd')) return { f: '/etc/passwd', d: ['  syslog:x:104:104::/home/syslog:/usr/sbin/nologin', '- user1:x:1001:1001:,,,:/home/user1:/bin/bash', '+ user1:x:1001:1001:,,,:/home/user1:/bin/bash', '+ dev_backdoor:x:0:0:Backdoor:/root:/bin/bash'] };
-    if (p.includes('limits.conf')) return { f: '/etc/security/limits.conf', d: ['  #Each line describes a limit', '- *  soft  core  0', '+ *  soft  core  unlimited', '+ *  hard  nofile  65536'] };
-    if (p.includes('sshd_config')) return { f: '/etc/ssh/sshd_config', d: ['  SyslogFacility AUTH', '- PermitRootLogin no', '+ PermitRootLogin yes', '- PasswordAuthentication no', '+ PasswordAuthentication yes'] };
-    if (p.includes('hosts')) return { f: 'C:\\Windows\\System32\\drivers\\etc\\hosts', d: ['  127.0.0.1  localhost', '+ 198.51.100.222  internal-router.local', '+ 203.0.113.88  malicious-c2.net'] };
-    if (p.includes('shadow')) return { f: '/etc/shadow', d: ['- root:$6$f82k30s9$482...:19022:0:99999:7:::', '+ root:$6$f82k30s9$482...:19022:0:99999:7:::', '+ dev_backdoor:$6$compromised...:19500:0:99999:7:::'] };
-
     const isDoc = filename.endsWith('.docx') || filename.endsWith('.xlsx') || filename.endsWith('.pdf') || filename.endsWith('.png') || filename.endsWith('.jpg') || filename.endsWith('.zip') || filename.endsWith('.exe') || filename.endsWith('.dll');
 
     if (isDoc) {
@@ -37,9 +33,9 @@ export default function FimDashboard({ fimEvents, onRefresh }: Props) {
           f: p,
           d: [
             `+ [Binary Data - Created File: ${filename}]`,
-            `+ Size: 1.4 MB`,
+            `+ Size: ${event.size ? `${(event.size / 1024).toFixed(1)} KB` : 'Unknown'}`,
             `+ Format: application/octet-stream`,
-            `+ Header Signature: 50 4B 03 04 (ZIP/Office Open XML)`
+            `+ MD5: ${event.md5 || 'N/A'}`
           ]
         };
       } else if (eventType === 'delete') {
@@ -47,8 +43,8 @@ export default function FimDashboard({ fimEvents, onRefresh }: Props) {
           f: p,
           d: [
             `- [Binary Data - Deleted File: ${filename}]`,
-            `- Size: 1.4 MB`,
-            `- Previous Checksum: d41d8cd98f00b204e9800998ecf8427e`
+            `- Size: ${event.size ? `${(event.size / 1024).toFixed(1)} KB` : 'Unknown'}`,
+            `- Previous Checksum: ${event.md5 || 'N/A'}`
           ]
         };
       } else {
@@ -56,62 +52,49 @@ export default function FimDashboard({ fimEvents, onRefresh }: Props) {
           f: p,
           d: [
             `  [Binary Data - Modified File: ${filename}]`,
-            `- Previous Checksum (MD5): 8f00b204e9800998ecf8427ed41d8cd9`,
-            `+ New Checksum (MD5): d41d8cd98f00b204e9800998ecf8427e`
+            `- Previous Checksum (MD5): ${event.md5 || 'N/A'}`,
+            `+ New Checksum (MD5): ${event.sha256 ? event.sha256.substring(0, 32) : 'N/A'}`,
+            `  Modified by: ${event.user || 'unknown'} via ${event.process || 'unknown'}`
           ]
         };
       }
     }
 
-    let lines: string[] = [];
-    if (filename.includes('credential') || filename.includes('password') || filename.includes('key')) {
-      lines = [
-        '# Aegis Internal Credentials Database',
-        'db_host=prod-db-replica.local',
-        'db_port=5432',
-        'db_user=admin',
-        'db_pass=SuperSecurePassword123!',
-        'api_key=ak-aegis-6844f0fb-df34bb48'
-      ];
-    } else if (filename.includes('photo') || filename.includes('image') || filename.includes('pic')) {
-      lines = [
-        '# Image Metadata Header',
-        'width=1920',
-        'height=1080',
-        'format=PNG',
-        'camera=Webcam-Security-04'
-      ];
-    } else {
-      lines = [
-        '# System configuration file',
-        `# Generated dynamically for ${filename}`,
-        'status=active',
-        'version=1.0.4',
-        'log_level=info'
-      ];
-    }
-
+    // Text file diffs generated from event metadata
     if (eventType === 'create') {
       return {
         f: p,
-        d: lines.map(line => `+ ${line}`)
+        d: [
+          `+ [New File Created: ${filename}]`,
+          `+ User: ${event.user || 'unknown'}`,
+          `+ Process: ${event.process || 'unknown'}`,
+          `+ Size: ${event.size ? `${event.size} bytes` : 'Unknown'}`,
+          `+ MD5: ${event.md5 || 'N/A'}`,
+          `+ SHA-256: ${event.sha256 ? `${event.sha256.substring(0, 24)}...` : 'N/A'}`
+        ]
       };
     } else if (eventType === 'delete') {
       return {
         f: p,
-        d: lines.map(line => `- ${line}`)
+        d: [
+          `- [File Deleted: ${filename}]`,
+          `- User: ${event.user || 'unknown'}`,
+          `- Process: ${event.process || 'unknown'}`,
+          `- Previous MD5: ${event.md5 || 'N/A'}`,
+          `- Previous SHA-256: ${event.sha256 ? `${event.sha256.substring(0, 24)}...` : 'N/A'}`
+        ]
       };
     } else {
       return {
         f: p,
         d: [
-          `  ${lines[0]}`,
-          `- ${lines[1]}`,
-          `+ ${lines[1]} (modified)`,
-          `  ${lines[2]}`,
-          `- ${lines[3]}`,
-          `+ ${lines[3]} (updated)`,
-          `  ${lines[4]}`
+          `  [File Modified: ${filename}]`,
+          `  Modified by: ${event.user || 'unknown'}`,
+          `  Process: ${event.process || 'unknown'}`,
+          `- Previous state (pre-modification)`,
+          `+ Current MD5: ${event.md5 || 'N/A'}`,
+          `+ Current SHA-256: ${event.sha256 ? `${event.sha256.substring(0, 24)}...` : 'N/A'}`,
+          `+ Size: ${event.size ? `${event.size} bytes` : 'Unknown'}`
         ]
       };
     }
@@ -194,10 +177,10 @@ export default function FimDashboard({ fimEvents, onRefresh }: Props) {
             </div>
             <div style={{ background: 'var(--bg-body)', borderRadius: 'var(--r-xs)', border: '1px solid var(--border-1)', overflow: 'hidden' }}>
               <div style={{ background: 'var(--bg-row-alt)', padding: '6px 12px', borderBottom: '1px solid var(--border-1)', fontSize: '0.7rem', fontFamily: "'IBM Plex Mono', monospace", color: 'var(--text-3)', display: 'flex', alignItems: 'center', gap: 4 }}>
-                <FileText size={10} /> {getDiff(sel.filePath, sel.eventType).f}
+                <FileText size={10} /> {getDiff(sel).f}
               </div>
               <pre style={{ padding: '10px 12px', margin: 0, overflowX: 'auto', fontSize: '0.72rem', fontFamily: "'IBM Plex Mono', monospace", lineHeight: 1.6 }}>
-                {getDiff(sel.filePath, sel.eventType).d.map((line, i) => {
+                {getDiff(sel).d.map((line, i) => {
                   const add = line.startsWith('+');
                   const rem = line.startsWith('-');
                   return <div key={i} style={{ color: add ? 'var(--low-dim)' : rem ? 'var(--critical-dim)' : 'var(--text-3)', background: add ? 'rgba(16,185,129,0.06)' : rem ? 'rgba(239,68,68,0.06)' : 'transparent', padding: '0 3px', borderRadius: 1 }}>{line}</div>;

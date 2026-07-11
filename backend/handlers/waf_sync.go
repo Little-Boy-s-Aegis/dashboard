@@ -4,9 +4,11 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log"
 	"net/netip"
 	"os"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
@@ -14,6 +16,26 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/wafv2"
 	"github.com/aws/aws-sdk-go-v2/service/wafv2/types"
 )
+
+// wafIPListCache caches the WAF IP list to avoid 2 AWS API calls per dashboard poll.
+// TTL = 30 seconds (WAF changes are rare; freshness tolerance is high).
+var wafIPListCache struct {
+	mu          sync.RWMutex
+	ips         []string
+	lastRefresh time.Time
+	ttl         time.Duration
+}
+
+func init() {
+	wafIPListCache.ttl = 30 * time.Second
+}
+
+// InvalidateWAFIPListCache forces the next listWAFBannedIPs call to re-query AWS.
+func InvalidateWAFIPListCache() {
+	wafIPListCache.mu.Lock()
+	wafIPListCache.lastRefresh = time.Time{}
+	wafIPListCache.mu.Unlock()
+}
 
 type wafIPSetTarget struct {
 	name   string
@@ -42,10 +64,44 @@ func syncWAFBannedIP(rawIP string, status string) error {
 	if len(failures) > 0 {
 		return errors.New(strings.Join(failures, "; "))
 	}
+	InvalidateWAFIPListCache() // WAF changed, refresh cache on next read
 	return nil
 }
 
+// listWAFBannedIPs returns cached WAF IPs, refreshing from AWS every 30 seconds.
 func listWAFBannedIPs() ([]string, error) {
+	wafIPListCache.mu.RLock()
+	if time.Since(wafIPListCache.lastRefresh) < wafIPListCache.ttl {
+		result := wafIPListCache.ips
+		wafIPListCache.mu.RUnlock()
+		return result, nil
+	}
+	wafIPListCache.mu.RUnlock()
+
+	// Cache miss — refresh
+	wafIPListCache.mu.Lock()
+	defer wafIPListCache.mu.Unlock()
+
+	// Double-check after write lock
+	if time.Since(wafIPListCache.lastRefresh) < wafIPListCache.ttl {
+		return wafIPListCache.ips, nil
+	}
+
+	ips, err := listWAFBannedIPsUncached()
+	if err != nil {
+		log.Printf("[WAF CACHE] Failed to refresh WAF IP list: %v", err)
+		// Return stale cache if available
+		if wafIPListCache.ips != nil {
+			return wafIPListCache.ips, nil
+		}
+		return nil, err
+	}
+	wafIPListCache.ips = ips
+	wafIPListCache.lastRefresh = time.Now()
+	return ips, nil
+}
+
+func listWAFBannedIPsUncached() ([]string, error) {
 	targets := wafIPSetTargets()
 	if len(targets) == 0 {
 		return nil, nil

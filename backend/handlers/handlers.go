@@ -23,6 +23,20 @@ func writeJSON(w http.ResponseWriter, status int, data interface{}) {
 	json.NewEncoder(w).Encode(data)
 }
 
+func queryIntParam(r *http.Request, name string, fallback int, max int) int {
+	value := fallback
+	raw := strings.TrimSpace(r.URL.Query().Get(name))
+	if raw != "" {
+		if parsed, err := strconv.Atoi(raw); err == nil && parsed > 0 {
+			value = parsed
+		}
+	}
+	if max > 0 && value > max {
+		return max
+	}
+	return value
+}
+
 // GET /api/summary
 func GetSummary(w http.ResponseWriter, r *http.Request) {
 	store.DB.Mu.RLock()
@@ -46,26 +60,44 @@ func GetSummary(w http.ResponseWriter, r *http.Request) {
 	cutoff := time.Now().Add(-24 * time.Hour)
 	alertCount := 0
 
-	for _, alt := range store.DB.Alerts {
-		if alt.Timestamp.Before(cutoff) {
-			continue
+	if store.UsePostgres {
+		total, crit, high, med, low, byCategory, mitre, err := store.QuerySQLSummaryStats(cutoff)
+		if err != nil {
+			log.Printf("[DATABASE ERROR] Failed to query summary stats from SQL: %v. Falling back to in-memory stats.", err)
+		} else {
+			alertCount = total
+			summary.CriticalAlerts = crit
+			summary.HighAlerts = high
+			summary.MediumAlerts = med
+			summary.LowAlerts = low
+			summary.AlertsByCategory = byCategory
+			summary.MitreCoverage = mitre
 		}
-		alertCount++
+	}
 
-		switch alt.Severity {
-		case "critical":
-			summary.CriticalAlerts++
-		case "high":
-			summary.HighAlerts++
-		case "medium":
-			summary.MediumAlerts++
-		case "low":
-			summary.LowAlerts++
-		}
+	// Fall back to memory loop if not using Postgres or if database query failed (alertCount is still 0)
+	if alertCount == 0 && !store.UsePostgres {
+		for _, alt := range store.DB.Alerts {
+			if alt.Timestamp.Before(cutoff) {
+				continue
+			}
+			alertCount++
 
-		summary.AlertsByCategory[alt.Category]++
-		if alt.MITRETechnique != "" {
-			summary.MitreCoverage[alt.MITRETechnique]++
+			switch alt.Severity {
+			case "critical":
+				summary.CriticalAlerts++
+			case "high":
+				summary.HighAlerts++
+			case "medium":
+				summary.MediumAlerts++
+			case "low":
+				summary.LowAlerts++
+			}
+
+			summary.AlertsByCategory[alt.Category]++
+			if alt.MITRETechnique != "" {
+				summary.MitreCoverage[alt.MITRETechnique]++
+			}
 		}
 	}
 
@@ -124,10 +156,22 @@ func GetAgentDetail(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Fetch recent alerts for this agent
-	recentAlerts := make([]*models.Alert, 0)
-	for _, alt := range store.DB.Alerts {
-		if alt.AgentID == agentID {
-			recentAlerts = append(recentAlerts, alt)
+	var recentAlerts []*models.Alert
+	var err error
+	if store.UsePostgres {
+		recentAlerts, err = store.QuerySQLAlerts("", agentID, "", "", 100)
+		if err != nil {
+			log.Printf("[DATABASE ERROR] Failed to fetch agent alerts from SQL: %v. Falling back to in-memory filter.", err)
+		}
+	}
+
+	// Fallback to in-memory filter if not using Postgres or if database query failed
+	if recentAlerts == nil {
+		recentAlerts = make([]*models.Alert, 0)
+		for _, alt := range store.DB.Alerts {
+			if alt.AgentID == agentID {
+				recentAlerts = append(recentAlerts, alt)
+			}
 		}
 	}
 
@@ -150,40 +194,59 @@ func GetAgentDetail(w http.ResponseWriter, r *http.Request) {
 
 // GET /api/alerts
 func GetAlerts(w http.ResponseWriter, r *http.Request) {
-	store.DB.Mu.RLock()
-	defer store.DB.Mu.RUnlock()
-
 	severityFilter := r.URL.Query().Get("severity")
 	agentFilter := r.URL.Query().Get("agentId")
 	statusFilter := r.URL.Query().Get("status")
-	searchFilter := strings.ToLower(r.URL.Query().Get("q"))
+	searchFilter := r.URL.Query().Get("q")
 
-	filteredAlerts := make([]*models.Alert, 0)
+	var filteredAlerts []*models.Alert
+	var err error
 
-	// Filter in reverse order (newest first)
-	for i := len(store.DB.Alerts) - 1; i >= 0; i-- {
-		alt := store.DB.Alerts[i]
+	limitVal := queryIntParam(r, "limit", 500, 2000)
 
-		if severityFilter != "" && alt.Severity != severityFilter {
-			continue
+	if store.UsePostgres {
+		filteredAlerts, err = store.QuerySQLAlerts(severityFilter, agentFilter, statusFilter, searchFilter, limitVal)
+		if err != nil {
+			log.Printf("[DATABASE ERROR] Failed to query alerts from SQL: %v. Falling back to in-memory filter.", err)
 		}
-		if agentFilter != "" && alt.AgentID != agentFilter {
-			continue
-		}
-		if statusFilter != "" && alt.Status != statusFilter {
-			continue
-		}
-		if searchFilter != "" {
-			match := strings.Contains(strings.ToLower(alt.Title), searchFilter) ||
-				strings.Contains(strings.ToLower(alt.Description), searchFilter) ||
-				strings.Contains(strings.ToLower(alt.AgentName), searchFilter) ||
-				strings.Contains(strings.ToLower(alt.MITRETechnique), searchFilter)
-			if !match {
+	}
+
+	// Fallback to in-memory filter if not using Postgres or query failed
+	if filteredAlerts == nil {
+		store.DB.Mu.RLock()
+		defer store.DB.Mu.RUnlock()
+
+		searchFilterLower := strings.ToLower(searchFilter)
+		filteredAlerts = make([]*models.Alert, 0)
+
+		// Filter in reverse order (newest first)
+		for i := len(store.DB.Alerts) - 1; i >= 0; i-- {
+			alt := store.DB.Alerts[i]
+
+			if severityFilter != "" && alt.Severity != severityFilter {
 				continue
 			}
-		}
+			if agentFilter != "" && alt.AgentID != agentFilter {
+				continue
+			}
+			if statusFilter != "" && alt.Status != statusFilter {
+				continue
+			}
+			if searchFilter != "" {
+				match := strings.Contains(strings.ToLower(alt.Title), searchFilterLower) ||
+					strings.Contains(strings.ToLower(alt.Description), searchFilterLower) ||
+					strings.Contains(strings.ToLower(alt.AgentName), searchFilterLower) ||
+					strings.Contains(strings.ToLower(alt.MITRETechnique), searchFilterLower)
+				if !match {
+					continue
+				}
+			}
 
-		filteredAlerts = append(filteredAlerts, alt)
+			filteredAlerts = append(filteredAlerts, alt)
+			if len(filteredAlerts) >= limitVal {
+				break
+			}
+		}
 	}
 
 	writeJSON(w, http.StatusOK, filteredAlerts)
@@ -541,51 +604,73 @@ func GetFimEvents(w http.ResponseWriter, r *http.Request) {
 
 // GET /api/logs
 func GetLogs(w http.ResponseWriter, r *http.Request) {
-	store.DB.Mu.RLock()
-	defer store.DB.Mu.RUnlock()
-
-	searchQuery := strings.ToLower(r.URL.Query().Get("q"))
+	searchQuery := r.URL.Query().Get("q")
 	agentFilter := r.URL.Query().Get("agentId")
 	facilityFilter := r.URL.Query().Get("facility")
 	actorFilter := r.URL.Query().Get("actor")
 
-	filteredLogs := make([]*models.LogEntry, 0)
-
-	// Search matching logs
-	for i := len(store.DB.Logs) - 1; i >= 0; i-- {
-		log := store.DB.Logs[i]
-
-		if agentFilter != "" && log.AgentID != agentFilter {
-			continue
+	listLimit := 100
+	limitParam := r.URL.Query().Get("limit")
+	if limitParam != "" {
+		if parsedLimit, err := strconv.Atoi(limitParam); err == nil && parsedLimit > 0 {
+			listLimit = parsedLimit
 		}
-		if facilityFilter != "" && log.Facility != facilityFilter {
-			continue
+	}
+
+	var filteredLogs []*models.LogEntry
+	var err error
+
+	if store.UsePostgres {
+		filteredLogs, err = store.QuerySQLLogEntries(searchQuery, agentFilter, facilityFilter, actorFilter, listLimit)
+		if err != nil {
+			log.Printf("[DATABASE ERROR] Failed to query logs from SQL: %v. Falling back to in-memory search.", err)
 		}
-		if actorFilter == "soc" {
-			if !strings.HasPrefix(log.AgentName, "SOC (") {
+	}
+
+	// Fallback to in-memory search if not using Postgres or if Postgres query failed
+	if filteredLogs == nil {
+		store.DB.Mu.RLock()
+		filteredLogs = make([]*models.LogEntry, 0)
+		searchQueryLower := strings.ToLower(searchQuery)
+		for i := len(store.DB.Logs) - 1; i >= 0; i-- {
+			logItem := store.DB.Logs[i]
+
+			if agentFilter != "" && logItem.AgentID != agentFilter {
 				continue
 			}
-		} else if actorFilter == "ai" {
-			if !strings.HasPrefix(log.AgentName, "SOAR") {
+			if facilityFilter != "" && logItem.Facility != facilityFilter {
 				continue
 			}
-		} else if actorFilter == "system" {
-			if strings.HasPrefix(log.AgentName, "SOC (") || strings.HasPrefix(log.AgentName, "SOAR") {
-				continue
+			if actorFilter == "soc" {
+				if !strings.HasPrefix(logItem.AgentName, "SOC (") {
+					continue
+				}
+			} else if actorFilter == "ai" {
+				if !strings.HasPrefix(logItem.AgentName, "SOAR") {
+					continue
+				}
+			} else if actorFilter == "system" {
+				if strings.HasPrefix(logItem.AgentName, "SOC (") || strings.HasPrefix(logItem.AgentName, "SOAR") {
+					continue
+				}
+			}
+
+			if searchQueryLower != "" {
+				match := strings.Contains(strings.ToLower(logItem.Message), searchQueryLower) ||
+					strings.Contains(strings.ToLower(logItem.Facility), searchQueryLower) ||
+					strings.Contains(strings.ToLower(logItem.AgentName), searchQueryLower) ||
+					strings.Contains(strings.ToLower(logItem.Severity), searchQueryLower)
+				if !match {
+					continue
+				}
+			}
+
+			filteredLogs = append(filteredLogs, logItem)
+			if len(filteredLogs) >= listLimit {
+				break
 			}
 		}
-
-		if searchQuery != "" {
-			match := strings.Contains(strings.ToLower(log.Message), searchQuery) ||
-				strings.Contains(strings.ToLower(log.Facility), searchQuery) ||
-				strings.Contains(strings.ToLower(log.AgentName), searchQuery) ||
-				strings.Contains(strings.ToLower(log.Severity), searchQuery)
-			if !match {
-				continue
-			}
-		}
-
-		filteredLogs = append(filteredLogs, log)
+		store.DB.Mu.RUnlock()
 	}
 
 	// Compute time histogram for the filtered logs
@@ -602,8 +687,8 @@ func GetLogs(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	for _, log := range filteredLogs {
-		diff := now.Sub(log.Timestamp)
+	for _, logItem := range filteredLogs {
+		diff := now.Sub(logItem.Timestamp)
 		if diff > 120*time.Minute || diff < 0 {
 			continue
 		}
@@ -611,18 +696,6 @@ func GetLogs(w http.ResponseWriter, r *http.Request) {
 		if bucketIdx >= 0 && bucketIdx < 10 {
 			histBuckets[bucketIdx]["count"] = histBuckets[bucketIdx]["count"].(int) + 1
 		}
-	}
-
-	// Pagination (limit to latest logs in the list, default 100)
-	listLimit := 100
-	limitParam := r.URL.Query().Get("limit")
-	if limitParam != "" {
-		if parsedLimit, err := strconv.Atoi(limitParam); err == nil && parsedLimit > 0 {
-			listLimit = parsedLimit
-		}
-	}
-	if len(filteredLogs) > listLimit {
-		filteredLogs = filteredLogs[:listLimit]
 	}
 
 	response := map[string]interface{}{
@@ -841,14 +914,40 @@ func BulkResolveAlerts(w http.ResponseWriter, r *http.Request) {
 	resolvedTitles := []string{}
 
 	for _, id := range req.IDs {
+		var agentID string
+		var title string
+		found := false
 		for _, alt := range store.DB.Alerts {
 			if alt.ID == id {
 				alt.Status = "resolved"
-				store.DB.SaveAlert(alt)
-				affectedAgents[alt.AgentID] = true
-				resolvedCount++
-				resolvedTitles = append(resolvedTitles, alt.Title)
+				agentID = alt.AgentID
+				title = alt.Title
+				found = true
 				break
+			}
+		}
+
+		if store.UsePostgres {
+			if found {
+				_, _ = store.SQL.Exec("UPDATE alerts SET status = 'resolved' WHERE id = $1", id)
+				affectedAgents[agentID] = true
+				resolvedCount++
+				resolvedTitles = append(resolvedTitles, title)
+			} else {
+				var dbAgentID, dbTitle string
+				err := store.SQL.QueryRow("SELECT agent_id, title FROM alerts WHERE id = $1", id).Scan(&dbAgentID, &dbTitle)
+				if err == nil {
+					_, _ = store.SQL.Exec("UPDATE alerts SET status = 'resolved' WHERE id = $1", id)
+					affectedAgents[dbAgentID] = true
+					resolvedCount++
+					resolvedTitles = append(resolvedTitles, dbTitle)
+				}
+			}
+		} else {
+			if found {
+				affectedAgents[agentID] = true
+				resolvedCount++
+				resolvedTitles = append(resolvedTitles, title)
 			}
 		}
 	}
@@ -856,10 +955,17 @@ func BulkResolveAlerts(w http.ResponseWriter, r *http.Request) {
 	// For each affected agent, re-verify if their status should go back to "active"
 	for agentID := range affectedAgents {
 		hasOtherCriticals := false
-		for _, alt := range store.DB.Alerts {
-			if alt.AgentID == agentID && alt.Status != "resolved" && (alt.Severity == "high" || alt.Severity == "critical") {
-				hasOtherCriticals = true
-				break
+		if store.UsePostgres {
+			err := store.SQL.QueryRow("SELECT EXISTS(SELECT 1 FROM alerts WHERE agent_id = $1 AND status != 'resolved' AND (severity = 'high' OR severity = 'critical'))", agentID).Scan(&hasOtherCriticals)
+			if err != nil {
+				hasOtherCriticals = false
+			}
+		} else {
+			for _, alt := range store.DB.Alerts {
+				if alt.AgentID == agentID && alt.Status != "resolved" && (alt.Severity == "high" || alt.Severity == "critical") {
+					hasOtherCriticals = true
+					break
+				}
 			}
 		}
 		if !hasOtherCriticals {
@@ -910,16 +1016,50 @@ func BulkAssignAlerts(w http.ResponseWriter, r *http.Request) {
 	assignedCount := 0
 	assignedTitles := []string{}
 	for _, id := range req.IDs {
+		var title string
+		found := false
 		for _, alt := range store.DB.Alerts {
 			if alt.ID == id {
 				alt.Assignee = req.Assignee
 				if req.Assignee != "" && alt.Status == "open" {
 					alt.Status = "investigating"
 				}
-				store.DB.SaveAlert(alt)
-				assignedCount++
-				assignedTitles = append(assignedTitles, alt.Title)
+				title = alt.Title
+				found = true
 				break
+			}
+		}
+
+		if store.UsePostgres {
+			if found {
+				var status string
+				err := store.SQL.QueryRow("SELECT status FROM alerts WHERE id = $1", id).Scan(&status)
+				if err == nil {
+					newStatus := status
+					if req.Assignee != "" && status == "open" {
+						newStatus = "investigating"
+					}
+					_, _ = store.SQL.Exec("UPDATE alerts SET assignee = $1, status = $2 WHERE id = $3", req.Assignee, newStatus, id)
+				}
+				assignedCount++
+				assignedTitles = append(assignedTitles, title)
+			} else {
+				var dbTitle, status string
+				err := store.SQL.QueryRow("SELECT title, status FROM alerts WHERE id = $1", id).Scan(&dbTitle, &status)
+				if err == nil {
+					newStatus := status
+					if req.Assignee != "" && status == "open" {
+						newStatus = "investigating"
+					}
+					_, _ = store.SQL.Exec("UPDATE alerts SET assignee = $1, status = $2 WHERE id = $3", req.Assignee, newStatus, id)
+					assignedCount++
+					assignedTitles = append(assignedTitles, dbTitle)
+				}
+			}
+		} else {
+			if found {
+				assignedCount++
+				assignedTitles = append(assignedTitles, title)
 			}
 		}
 	}
@@ -945,6 +1085,8 @@ func BulkAssignAlerts(w http.ResponseWriter, r *http.Request) {
 
 // GET /api/actions
 func GetActions(w http.ResponseWriter, r *http.Request) {
+	limitVal := queryIntParam(r, "limit", 300, 1000)
+
 	if store.UsePostgres {
 		rows, err := store.SQL.Query(`
 			SELECT id, timestamp, actor, action_type, target, status, message
@@ -963,8 +1105,8 @@ func GetActions(w http.ResponseWriter, r *http.Request) {
 				'Bulk Assign'
 			)
 			ORDER BY timestamp DESC, id DESC
-			LIMIT 500
-		`)
+			LIMIT $1
+		`, limitVal)
 		if err != nil {
 			log.Printf("[DATABASE ERROR] Failed to fetch action logs from PostgreSQL: %v", err)
 			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "Database read error"})
@@ -999,7 +1141,7 @@ func GetActions(w http.ResponseWriter, r *http.Request) {
 			continue
 		}
 		actionsList = append(actionsList, act)
-		if len(actionsList) >= 500 {
+		if len(actionsList) >= limitVal {
 			break
 		}
 	}
@@ -1095,29 +1237,43 @@ func PerformAction(w http.ResponseWriter, r *http.Request) {
 			if err := store.SaveSQLBannedIP(req.Target, resolvedActor, "active", "Manual block from SOC Dashboard"); err != nil {
 				status = "failed"
 				detailMsg = fmt.Sprintf("Failed to persist IP block for %s: %v", req.Target, err)
-			} else if err := syncWAFBannedIP(req.Target, "active"); err != nil {
-				status = "failed"
-				detailMsg = fmt.Sprintf("Failed to sync WAF IP block for %s: %v", req.Target, err)
-			} else if err := syncNetworkBannedIP(req.Target, "active"); err != nil {
-				status = "failed"
-				detailMsg = fmt.Sprintf("Failed to sync network ACL IP block for %s: %v", req.Target, err)
-			} else if err := syncBankBannedIP(req.Target, resolvedActor, "active", "Manual block from SOC Dashboard"); err != nil {
-				detailMsg = fmt.Sprintf("%s Bank application sync warning: %v.", detailMsg, err)
+			} else {
+				// PERFORMANCE: Run WAF/ACL/Bank sync asynchronously
+				target := req.Target
+				actor := resolvedActor
+				go func() {
+					if err := syncWAFBannedIP(target, "active"); err != nil {
+						log.Printf("[MANUAL BAN ASYNC] WAF sync failed for %s: %v", target, err)
+					}
+					if err := syncNetworkBannedIP(target, "active"); err != nil {
+						log.Printf("[MANUAL BAN ASYNC] Network ACL sync failed for %s: %v", target, err)
+					}
+					if err := syncBankBannedIP(target, actor, "active", "Manual block from SOC Dashboard"); err != nil {
+						log.Printf("[MANUAL BAN ASYNC] Bank sync warning for %s: %v", target, err)
+					}
+				}()
 			}
 		}
 	} else if req.ActionType == "Unblock IP" {
 		detailMsg = fmt.Sprintf("Outbound and inbound traffic to IP %s unblocked.", req.Target)
-		if err := syncWAFBannedIP(req.Target, "unbanned"); err != nil {
-			status = "failed"
-			detailMsg = fmt.Sprintf("Failed to sync WAF IP unblock for %s: %v", req.Target, err)
-		} else if err := syncNetworkBannedIP(req.Target, "unbanned"); err != nil {
-			status = "failed"
-			detailMsg = fmt.Sprintf("Failed to sync network ACL IP unblock for %s: %v", req.Target, err)
-		} else if err := store.SaveSQLBannedIP(req.Target, resolvedActor, "unbanned", "Manual unblock from SOC Dashboard"); err != nil {
+		if err := store.SaveSQLBannedIP(req.Target, resolvedActor, "unbanned", "Manual unblock from SOC Dashboard"); err != nil {
 			status = "failed"
 			detailMsg = fmt.Sprintf("Failed to persist IP unblock for %s: %v", req.Target, err)
-		} else if err := syncBankBannedIP(req.Target, resolvedActor, "unbanned", "Manual unblock from SOC Dashboard"); err != nil {
-			detailMsg = fmt.Sprintf("%s Bank application sync warning: %v.", detailMsg, err)
+		} else {
+			// PERFORMANCE: Run WAF/ACL/Bank cleanup asynchronously
+			target := req.Target
+			actor := resolvedActor
+			go func() {
+				if err := syncWAFBannedIP(target, "unbanned"); err != nil {
+					log.Printf("[MANUAL UNBAN ASYNC] WAF sync failed for %s: %v", target, err)
+				}
+				if err := syncNetworkBannedIP(target, "unbanned"); err != nil {
+					log.Printf("[MANUAL UNBAN ASYNC] Network ACL sync failed for %s: %v", target, err)
+				}
+				if err := syncBankBannedIP(target, actor, "unbanned", "Manual unblock from SOC Dashboard"); err != nil {
+					log.Printf("[MANUAL UNBAN ASYNC] Bank sync warning for %s: %v", target, err)
+				}
+			}()
 		}
 	} else if req.ActionType == "Unblock All IPs" {
 		detailMsg = "All outbound and inbound traffic blocks cleared."
@@ -1126,27 +1282,29 @@ func PerformAction(w http.ResponseWriter, r *http.Request) {
 			status = "failed"
 			detailMsg = fmt.Sprintf("Failed to retrieve banned IPs list: %v", err)
 		} else {
-			var syncErrors []string
-			for _, b := range bannedIPs {
-				if err := syncWAFBannedIP(b.IPAddress, "unbanned"); err != nil {
-					syncErrors = append(syncErrors, fmt.Sprintf("WAF %s: %v", b.IPAddress, err))
-				}
-				if err := syncNetworkBannedIP(b.IPAddress, "unbanned"); err != nil {
-					syncErrors = append(syncErrors, fmt.Sprintf("ACL %s: %v", b.IPAddress, err))
-				}
-			}
-
+			// DB clear first (synchronous - fast)
 			if err := store.ClearSQLBannedIPs(); err != nil {
 				status = "failed"
 				detailMsg = fmt.Sprintf("Failed to clear banned IPs in DB: %v", err)
-			}
-
-			if err := syncBankClearBannedIPs(); err != nil {
-				detailMsg = fmt.Sprintf("%s Bank application sync warning: %v.", detailMsg, err)
-			}
-
-			if len(syncErrors) > 0 {
-				detailMsg = fmt.Sprintf("%s Sync issues: %s", detailMsg, strings.Join(syncErrors, ", "))
+			} else {
+				// PERFORMANCE: Run WAF/ACL/Bank cleanup asynchronously for all IPs
+				ipsCopy := make([]string, len(bannedIPs))
+				for i, b := range bannedIPs {
+					ipsCopy[i] = b.IPAddress
+				}
+				go func() {
+					for _, ip := range ipsCopy {
+						if err := syncWAFBannedIP(ip, "unbanned"); err != nil {
+							log.Printf("[UNBAN ALL ASYNC] WAF sync failed for %s: %v", ip, err)
+						}
+						if err := syncNetworkBannedIP(ip, "unbanned"); err != nil {
+							log.Printf("[UNBAN ALL ASYNC] ACL sync failed for %s: %v", ip, err)
+						}
+					}
+					if err := syncBankClearBannedIPs(); err != nil {
+						log.Printf("[UNBAN ALL ASYNC] Bank sync warning: %v", err)
+					}
+				}()
 			}
 		}
 	} else if req.ActionType == "Terminate Process" {
@@ -1270,6 +1428,9 @@ func ingestExecutedSoarActions(dec *SoarDecisionPayload, info *ParsedSoarInfo, o
 		if detailMsg == "" {
 			detailMsg = "SOAR playbook action executed."
 		}
+		if info.IncidentID != "" {
+			detailMsg = fmt.Sprintf("%s (Incident: %s)", detailMsg, info.IncidentID)
+		}
 
 		if !store.IsPersistentSecurityActionType(mappedActionType) {
 			processedActions = append(processedActions, fmt.Sprintf("%s observed without persistence", mappedActionType))
@@ -1300,14 +1461,22 @@ func ingestExecutedSoarActions(dec *SoarDecisionPayload, info *ParsedSoarInfo, o
 				if err := store.SaveSQLBannedIP(normalizedTarget, "SOAR L2 Orchestrator", "active", act.Rationale); err != nil {
 					actionStatus = "failed"
 					detailMsg = fmt.Sprintf("Failed to persist SOAR IP block for %s: %v", normalizedTarget, err)
-				} else if err := syncWAFBannedIP(normalizedTarget, "active"); err != nil {
-					actionStatus = "failed"
-					detailMsg = fmt.Sprintf("Failed to sync SOAR WAF IP block for %s: %v", normalizedTarget, err)
-				} else if err := syncNetworkBannedIP(normalizedTarget, "active"); err != nil {
-					actionStatus = "failed"
-					detailMsg = fmt.Sprintf("Failed to sync SOAR network ACL IP block for %s: %v", normalizedTarget, err)
-				} else if err := syncBankBannedIP(normalizedTarget, "SOAR L2 Orchestrator", "active", act.Rationale); err != nil {
-					detailMsg = fmt.Sprintf("%s Bank application sync warning: %v.", detailMsg, err)
+				} else {
+					// PERFORMANCE: Run WAF/ACL/Bank sync asynchronously to avoid blocking the HTTP response.
+					// The DB write above is the authoritative record. External syncs are best-effort.
+					target := normalizedTarget
+					rationale := act.Rationale
+					go func() {
+						if err := syncWAFBannedIP(target, "active"); err != nil {
+							log.Printf("[SOAR ASYNC] WAF sync failed for %s: %v", target, err)
+						}
+						if err := syncNetworkBannedIP(target, "active"); err != nil {
+							log.Printf("[SOAR ASYNC] Network ACL sync failed for %s: %v", target, err)
+						}
+						if err := syncBankBannedIP(target, "SOAR L2 Orchestrator", "active", rationale); err != nil {
+							log.Printf("[SOAR ASYNC] Bank sync warning for %s: %v", target, err)
+						}
+					}()
 				}
 			}
 		}
@@ -1424,9 +1593,9 @@ func upsertSoarAlert(dec *SoarDecisionPayload, info *ParsedSoarInfo, bodyBytes [
 	}
 
 	store.DB.Mu.Lock()
-	defer store.DB.Mu.Unlock()
 
 	found := false
+	var existingAlert *models.Alert
 	for _, a := range store.DB.Alerts {
 		if a.RuleID == "rule-soar-"+info.IncidentID || strings.Contains(a.Description, info.IncidentID) {
 			a.Severity = info.Severity
@@ -1435,14 +1604,18 @@ func upsertSoarAlert(dec *SoarDecisionPayload, info *ParsedSoarInfo, bodyBytes [
 				info.AttackType, info.SourceIP, info.AffectedAccount, dec.Decision.Justification)
 			a.Status = "investigating"
 			found = true
-			if store.UsePostgres {
-				_ = store.SaveSQLAlert(a)
-			}
+			existingAlert = a
 			break
 		}
 	}
 
 	if found {
+		store.DB.Mu.Unlock()
+		if store.UsePostgres && existingAlert != nil {
+			go func(a *models.Alert) {
+				_ = store.SaveSQLAlert(a)
+			}(existingAlert)
+		}
 		return
 	}
 
@@ -1451,6 +1624,7 @@ func upsertSoarAlert(dec *SoarDecisionPayload, info *ParsedSoarInfo, bodyBytes [
 
 	agentID := "agent-01"
 	agentName := "Web-Prod-01"
+	var matchedAgent *models.Agent
 	if len(dec.VerifiedCase.Entities.Hosts) > 0 {
 		hostVal := dec.VerifiedCase.Entities.Hosts[0]
 		for _, ag := range store.DB.Agents {
@@ -1458,17 +1632,17 @@ func upsertSoarAlert(dec *SoarDecisionPayload, info *ParsedSoarInfo, bodyBytes [
 				agentID = ag.ID
 				agentName = ag.Name
 				ag.Status = "alerting"
-				store.DB.SaveAgent(ag)
+				matchedAgent = ag
 				break
 			}
 		}
 	}
 
 	alert := &models.Alert{
-		ID:       newAlertID,
-		RuleID:   "rule-soar-" + info.IncidentID,
-		Severity: info.Severity,
-		Title:    "SOAR L2 Confirmed - " + info.AttackType,
+		ID:             newAlertID,
+		RuleID:         "rule-soar-" + info.IncidentID,
+		Severity:       info.Severity,
+		Title:          "SOAR L2 Confirmed - " + info.AttackType,
 		Description: fmt.Sprintf("Confirmed attack of type %s from IP %s. Affected accounts: %s. Justification: %s",
 			info.AttackType, info.SourceIP, info.AffectedAccount, dec.Decision.Justification),
 		AgentID:        agentID,
@@ -1481,7 +1655,21 @@ func upsertSoarAlert(dec *SoarDecisionPayload, info *ParsedSoarInfo, bodyBytes [
 		Status:         "open",
 	}
 
-	store.DB.AddAlert(alert)
+	store.DB.Alerts = append(store.DB.Alerts, alert)
+	if len(store.DB.Alerts) > 100 {
+		store.DB.Alerts = store.DB.Alerts[len(store.DB.Alerts)-100:]
+	}
+
+	store.DB.Mu.Unlock()
+
+	if store.UsePostgres {
+		go func(al *models.Alert, ag *models.Agent) {
+			if ag != nil {
+				_ = store.SaveSQLAgent(ag)
+			}
+			_ = store.SaveSQLAlert(al)
+		}(alert, matchedAgent)
+	}
 }
 
 type AlertAutobanResult struct {
@@ -1754,64 +1942,70 @@ func riskScoreForSeverity(severity string) float64 {
 
 // GET /api/soar/metrics
 func GetSoarMetrics(w http.ResponseWriter, r *http.Request) {
-	store.DB.Mu.RLock()
-	defer store.DB.Mu.RUnlock()
+	var alerts []*models.Alert
+	var actionLogs []*models.ActionLog
+	totalPlaybooks := 0
+	successCount := 0
+	failedCount := 0
 
-	securityActions := make([]*models.ActionLog, 0)
-	for _, act := range store.DB.ActionLogs {
-		if act == nil || !store.IsPersistentSecurityActionType(act.ActionType) {
-			continue
+	if store.UsePostgres {
+		var err error
+		totalPlaybooks, successCount, failedCount, err = querySoarActionStatusTotals()
+		if err != nil {
+			log.Printf("[DATABASE ERROR] Failed to aggregate SOAR metrics from PostgreSQL: %v", err)
 		}
-		if !(strings.Contains(act.Actor, "SOAR") || strings.Contains(act.Actor, "AI")) {
-			continue
+
+		actionLogs, err = queryRecentSoarActions(1000)
+		if err != nil {
+			log.Printf("[DATABASE ERROR] Failed to fetch recent SOAR actions: %v", err)
+			actionLogs = nil
 		}
-		securityActions = append(securityActions, act)
-	}
 
-	var responseTimes []float64
-
-	for _, a := range store.DB.Alerts {
-		if strings.HasPrefix(a.RuleID, "rule-") {
-			var incidentID string
-			if strings.HasPrefix(a.RuleID, "rule-soar-") {
-				incidentID = strings.TrimPrefix(a.RuleID, "rule-soar-")
-			} else if strings.HasPrefix(a.RuleID, "rule-sim-") {
-				incidentID = strings.TrimPrefix(a.RuleID, "rule-sim-")
-			} else {
-				incidentID = a.ID
-			}
-
-			// Find matching ActionLog for this incident
-			for _, act := range securityActions {
-				if strings.Contains(act.Message, incidentID) || strings.Contains(act.ID, incidentID) || strings.Contains(act.Message, a.ID) {
-					duration := act.Timestamp.Sub(a.Timestamp).Seconds()
-					if duration > 0 && duration < 300 { // valid duration window (under 5 mins)
-						responseTimes = append(responseTimes, duration)
-					}
+		alerts, err = queryRecentAlertTimingRefs(1000)
+		if err != nil {
+			log.Printf("[DATABASE ERROR] Failed to fetch recent alert timing refs: %v", err)
+			alerts = nil
+		}
+	} else {
+		store.DB.Mu.RLock()
+		for _, act := range store.DB.ActionLogs {
+			if isSoarSecurityAction(act) {
+				totalPlaybooks++
+				if actionStatusFailed(act.Status) {
+					failedCount++
+				} else {
+					successCount++
 				}
 			}
 		}
+		for i := len(store.DB.ActionLogs) - 1; i >= 0 && len(actionLogs) < 1000; i-- {
+			if isSoarSecurityAction(store.DB.ActionLogs[i]) {
+				actionLogs = append(actionLogs, store.DB.ActionLogs[i])
+			}
+		}
+		for i := len(store.DB.Alerts) - 1; i >= 0 && len(alerts) < 1000; i-- {
+			alerts = append(alerts, store.DB.Alerts[i])
+		}
+		store.DB.Mu.RUnlock()
 	}
 
-	totalPlaybooks := len(securityActions)
-
-	successCount := 0
-	failedCount := 0
-	for _, act := range securityActions {
-		if act.Status == "success" {
-			successCount++
-		} else if act.Status == "failed" {
-			failedCount++
+	if totalPlaybooks == 0 && len(actionLogs) > 0 {
+		for _, act := range actionLogs {
+			totalPlaybooks++
+			if actionStatusFailed(act.Status) {
+				failedCount++
+			} else {
+				successCount++
+			}
 		}
 	}
 
 	successRate := 0.0
 	if (successCount + failedCount) > 0 {
 		successRate = (float64(successCount) / float64(successCount+failedCount)) * 100.0
-	} else {
-		successRate = 100.0 // Default to 100% if no actions have run
 	}
 
+	responseTimes := computeSoarResponseTimes(alerts, actionLogs)
 	avgResponseTime := 0.0
 	if len(responseTimes) > 0 {
 		totalTime := 0.0
@@ -1821,15 +2015,243 @@ func GetSoarMetrics(w http.ResponseWriter, r *http.Request) {
 		avgResponseTime = totalTime / float64(len(responseTimes))
 	}
 
+	under15Pct, under30Pct, over30Pct := computeSLAPercentages(responseTimes)
+
 	metrics := map[string]interface{}{
 		"totalPlaybooks":         totalPlaybooks,
 		"successCount":           successCount,
 		"failedCount":            failedCount,
 		"successRate":            successRate,
 		"avgResponseTimeSeconds": avgResponseTime,
+		"slaUnder15Pct":          under15Pct,
+		"slaUnder30Pct":          under30Pct,
+		"slaOver30Pct":           over30Pct,
+		"slaSampleCount":         len(responseTimes),
 	}
 
 	writeJSON(w, http.StatusOK, metrics)
+}
+
+func querySoarActionStatusTotals() (int, int, int, error) {
+	rows, err := store.SQL.Query(`
+		SELECT status, COUNT(*)
+		FROM action_logs
+		WHERE action_type IN (
+			'Block IP',
+			'Unblock IP',
+			'Unblock All IPs',
+			'Isolate Host',
+			'Terminate Process',
+			'Revoke Credentials',
+			'Force Logout'
+		)
+		AND (actor LIKE '%SOAR%' OR actor LIKE '%AI%')
+		GROUP BY status
+	`)
+	if err != nil {
+		return 0, 0, 0, err
+	}
+	defer rows.Close()
+
+	total := 0
+	successCount := 0
+	failedCount := 0
+	for rows.Next() {
+		var status string
+		var count int
+		if err := rows.Scan(&status, &count); err != nil {
+			return 0, 0, 0, err
+		}
+		total += count
+		if actionStatusFailed(status) {
+			failedCount += count
+		} else {
+			successCount += count
+		}
+	}
+	return total, successCount, failedCount, rows.Err()
+}
+
+func queryRecentSoarActions(limitVal int) ([]*models.ActionLog, error) {
+	rows, err := store.SQL.Query(`
+		SELECT id, timestamp, actor, action_type, target, status, message
+		FROM action_logs
+		WHERE action_type IN (
+			'Block IP',
+			'Unblock IP',
+			'Unblock All IPs',
+			'Isolate Host',
+			'Terminate Process',
+			'Revoke Credentials',
+			'Force Logout'
+		)
+		AND (actor LIKE '%SOAR%' OR actor LIKE '%AI%')
+		ORDER BY timestamp DESC, id DESC
+		LIMIT $1
+	`, limitVal)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	actionLogs := make([]*models.ActionLog, 0, limitVal)
+	for rows.Next() {
+		var act models.ActionLog
+		if err := rows.Scan(&act.ID, &act.Timestamp, &act.Actor, &act.ActionType, &act.Target, &act.Status, &act.Message); err != nil {
+			return nil, err
+		}
+		actionLogs = append(actionLogs, &act)
+	}
+	return actionLogs, rows.Err()
+}
+
+func queryRecentAlertTimingRefs(limitVal int) ([]*models.Alert, error) {
+	rows, err := store.SQL.Query(`
+		SELECT id, rule_id, timestamp
+		FROM alerts
+		ORDER BY timestamp DESC, id DESC
+		LIMIT $1
+	`, limitVal)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	alerts := make([]*models.Alert, 0, limitVal)
+	for rows.Next() {
+		var alert models.Alert
+		if err := rows.Scan(&alert.ID, &alert.RuleID, &alert.Timestamp); err != nil {
+			return nil, err
+		}
+		alerts = append(alerts, &alert)
+	}
+	return alerts, rows.Err()
+}
+
+func isSoarSecurityAction(act *models.ActionLog) bool {
+	return act != nil &&
+		store.IsPersistentSecurityActionType(act.ActionType) &&
+		(strings.Contains(act.Actor, "SOAR") || strings.Contains(act.Actor, "AI"))
+}
+
+func actionStatusFailed(status string) bool {
+	statusLower := strings.ToLower(status)
+	return statusLower == "failed" || statusLower == "error"
+}
+
+func computeSoarResponseTimes(alerts []*models.Alert, actionLogs []*models.ActionLog) []float64 {
+	alertByKey := make(map[string]*models.Alert, len(alerts)*2)
+	for _, alert := range alerts {
+		for _, key := range alertIncidentKeys(alert) {
+			alertByKey[strings.ToLower(key)] = alert
+		}
+	}
+
+	responseTimes := make([]float64, 0)
+	for _, act := range actionLogs {
+		for _, key := range actionIncidentKeys(act) {
+			alert := alertByKey[strings.ToLower(key)]
+			if alert == nil {
+				continue
+			}
+			duration := act.Timestamp.Sub(alert.Timestamp).Seconds()
+			if duration > 0 && duration < 300 {
+				responseTimes = append(responseTimes, duration)
+				break
+			}
+		}
+	}
+	return responseTimes
+}
+
+func alertIncidentKeys(alert *models.Alert) []string {
+	if alert == nil {
+		return nil
+	}
+	keys := []string{alert.ID}
+	if strings.HasPrefix(alert.RuleID, "rule-soar-") {
+		keys = append(keys, strings.TrimPrefix(alert.RuleID, "rule-soar-"))
+	} else if strings.HasPrefix(alert.RuleID, "rule-sim-") {
+		keys = append(keys, strings.TrimPrefix(alert.RuleID, "rule-sim-"))
+	} else if strings.HasPrefix(alert.RuleID, "rule-") {
+		keys = append(keys, strings.TrimPrefix(alert.RuleID, "rule-"))
+	}
+	return uniqueNonEmptyKeys(keys)
+}
+
+func actionIncidentKeys(act *models.ActionLog) []string {
+	if act == nil {
+		return nil
+	}
+	keys := make([]string, 0, 4)
+	keys = append(keys, incidentTokensFromText(act.Message)...)
+	keys = append(keys, incidentTokensFromText(act.ID)...)
+	return uniqueNonEmptyKeys(keys)
+}
+
+func incidentTokensFromText(text string) []string {
+	if text == "" {
+		return nil
+	}
+	tokens := strings.FieldsFunc(text, func(r rune) bool {
+		return !((r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9') || r == '-' || r == '_')
+	})
+
+	keys := make([]string, 0, 2)
+	for i, token := range tokens {
+		upper := strings.ToUpper(token)
+		if strings.HasPrefix(upper, "INC-") || strings.HasPrefix(upper, "ALT-") || strings.HasPrefix(upper, "ALERT-") {
+			keys = append(keys, token)
+			continue
+		}
+		if (upper == "INCIDENT" || upper == "INCIDENT_ID") && i+1 < len(tokens) {
+			keys = append(keys, tokens[i+1])
+		}
+	}
+	return keys
+}
+
+func uniqueNonEmptyKeys(keys []string) []string {
+	seen := map[string]bool{}
+	result := make([]string, 0, len(keys))
+	for _, key := range keys {
+		key = strings.TrimSpace(key)
+		if key == "" {
+			continue
+		}
+		lower := strings.ToLower(key)
+		if seen[lower] {
+			continue
+		}
+		seen[lower] = true
+		result = append(result, key)
+	}
+	return result
+}
+
+func computeSLAPercentages(responseTimes []float64) (float64, float64, float64) {
+	if len(responseTimes) == 0 {
+		return 0, 100, 0
+	}
+	under15 := 0
+	under30 := 0
+	over30 := 0
+	for _, seconds := range responseTimes {
+		if seconds < 15 {
+			under15++
+			under30++
+		} else if seconds <= 30 {
+			under30++
+		} else {
+			over30++
+		}
+	}
+	total := float64(len(responseTimes))
+	return roundPercent(float64(under15) / total), roundPercent(float64(under30) / total), roundPercent(float64(over30) / total)
+}
+
+func roundPercent(ratio float64) float64 {
+	return float64(int(ratio*1000+0.5)) / 10
 }
 
 // GET /api/settings
@@ -1847,10 +2269,11 @@ func GetSettings(w http.ResponseWriter, r *http.Request) {
 
 // POST /api/settings
 func SaveSettings(w http.ResponseWriter, r *http.Request) {
-	// SOC role restriction: cannot save settings
-	if _, sessionExists := resolveSessionUsername(r); sessionExists {
-		writeJSON(w, http.StatusForbidden, map[string]string{
-			"error": "Forbidden: The SOC role is restricted to read and Ban/Unban actions. Modifying settings is denied.",
+	// SOC role restriction: require authenticated session to save settings
+	_, sessionExists := resolveSessionUsername(r)
+	if !sessionExists {
+		writeJSON(w, http.StatusUnauthorized, map[string]string{
+			"error": "Unauthorized: Session invalid or expired",
 		})
 		return
 	}
@@ -1881,10 +2304,19 @@ func SaveSettings(w http.ResponseWriter, r *http.Request) {
 
 // GET /api/banned-ips
 func GetBannedIPs(w http.ResponseWriter, r *http.Request) {
-	list, err := store.GetSQLBannedIPs()
+	searchQuery := strings.TrimSpace(r.URL.Query().Get("q"))
+	limitVal := queryIntParam(r, "limit", 250, 1000)
+
+	list, err := store.QuerySQLBannedIPs(searchQuery, limitVal)
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "Failed to fetch banned IPs"})
 		return
+	}
+
+	totalActive, countErr := store.CountSQLBannedIPs(searchQuery)
+	if countErr != nil {
+		log.Printf("[DATABASE WARNING] Failed to count banned IP registry: %v", countErr)
+		totalActive = len(list)
 	}
 
 	wafIPs, err := listWAFBannedIPs()
@@ -1899,6 +2331,9 @@ func GetBannedIPs(w http.ResponseWriter, r *http.Request) {
 			if seen[ip] {
 				continue
 			}
+			if searchQuery != "" && !strings.Contains(strings.ToLower(ip), strings.ToLower(searchQuery)) {
+				continue
+			}
 			list = append(list, &models.BannedIP{
 				IPAddress: ip,
 				BannedAt:  time.Now(),
@@ -1907,9 +2342,18 @@ func GetBannedIPs(w http.ResponseWriter, r *http.Request) {
 				Reason:    "Runtime WAF blocklist (edge and ALB enforcement)",
 			})
 			seen[ip] = true
+			totalActive++
+			if len(list) >= limitVal {
+				break
+			}
 		}
 	}
 
+	if len(list) > limitVal {
+		list = list[:limitVal]
+	}
+	w.Header().Set("X-Aegis-Result-Limit", strconv.Itoa(limitVal))
+	w.Header().Set("X-Aegis-Total-Active-Bans", strconv.Itoa(totalActive))
 	writeJSON(w, http.StatusOK, list)
 }
 
@@ -1983,27 +2427,27 @@ func LogSOCAction(actor string, actionType string, target string, status string,
 // LogSOCToSyslog saves a SOC action log into the general log_entries table
 func LogSOCToSyslog(actor string, actionType string, target string, message string) {
 	logID := fmt.Sprintf("log-soc-%d-%s", time.Now().UnixNano(), generateSessionToken()[:8])
-	
+
 	actorName := actor
 	if !strings.HasPrefix(actorName, "SOC (") && !strings.HasPrefix(actorName, "SOAR") {
 		actorName = fmt.Sprintf("SOC (%s)", actor)
 	}
 
 	logEntry := &models.LogEntry{
-		ID:             logID,
-		Timestamp:      time.Now(),
-		AgentID:        "soc-console",
-		AgentName:      actorName,
-		Facility:       "soc_audit",
-		Severity:       "info",
-		Message:        fmt.Sprintf("[%s] %s on %s: %s", actor, actionType, target, message),
-		SourceIP:       "127.0.0.1",
-		StatusCode:     0,
-		GeoIP:          "N/A",
-		ASN:            "N/A",
-		AssetCritical:  "low",
-		ThreatFlagged:  false,
-		
+		ID:            logID,
+		Timestamp:     time.Now(),
+		AgentID:       "soc-console",
+		AgentName:     actorName,
+		Facility:      "soc_audit",
+		Severity:      "info",
+		Message:       fmt.Sprintf("[%s] %s on %s: %s", actor, actionType, target, message),
+		SourceIP:      "127.0.0.1",
+		StatusCode:    0,
+		GeoIP:         "N/A",
+		ASN:           "N/A",
+		AssetCritical: "low",
+		ThreatFlagged: false,
+
 		// ECS Fields
 		ECSTimestamp:    time.Now().Format(time.RFC3339Nano),
 		ECSLogLevel:     "info",

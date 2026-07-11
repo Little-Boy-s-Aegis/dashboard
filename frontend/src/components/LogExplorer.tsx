@@ -33,9 +33,11 @@ export default function LogExplorer({ onRefresh }: Props) {
   useEffect(() => { fetchLogs(); }, [dq, facility, actor]);
 
   const sevStyle = (s: string) => {
-    if (s === 'alert') return { color: 'var(--critical-dim)', background: 'var(--critical-bg)' };
-    if (s === 'error') return { color: 'var(--high-dim)', background: 'var(--high-bg)' };
-    if (s === 'warning') return { color: 'var(--medium-dim)', background: 'var(--medium-bg)' };
+    const lower = s ? s.toLowerCase() : '';
+    if (lower === 'alert' || lower === 'critical') return { color: 'var(--critical-dim)', background: 'var(--critical-bg)' };
+    if (lower === 'error' || lower === 'high') return { color: 'var(--high-dim)', background: 'var(--high-bg)' };
+    if (lower === 'warning' || lower === 'medium') return { color: 'var(--medium-dim)', background: 'var(--medium-bg)' };
+    if (lower === 'low') return { color: 'var(--low-dim)', background: 'var(--low-bg)' };
     return { color: 'var(--info-dim)', background: 'var(--info-bg)' };
   };
 

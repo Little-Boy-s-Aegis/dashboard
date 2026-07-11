@@ -47,8 +47,9 @@ export default function AgentManager({ agents }: Props) {
     </div>
   );
 
-  const linuxCmd = `curl -so wazuh-agent.deb https://packages.wazuh.com/4.x/apt/pool/main/w/wazuh-agent/wazuh-agent_4.5.3-1_amd64.deb && WAZUH_MANAGER="192.168.10.250" dpkg -i wazuh-agent.deb && systemctl enable --now wazuh-agent`;
-  const winCmd = `Invoke-WebRequest -Uri "https://packages.wazuh.com/4.x/windows/wazuh-agent-4.5.3-1.msi" -OutFile "wazuh-agent.msi"; msiexec /i wazuh-agent.msi /q WAZUH_MANAGER="192.168.10.250"; Start-Service Wazuh`;
+  const agentHostname = detail?.agent?.name || 'TARGET_HOST';
+  const linuxCmd = `curl -so wazuh-agent.deb https://packages.wazuh.com/4.x/apt/pool/main/w/wazuh-agent/wazuh-agent_latest_amd64.deb && WAZUH_MANAGER="wazuh.internal.aegis.com" WAZUH_AGENT_NAME="${agentHostname}" dpkg -i wazuh-agent.deb && systemctl enable --now wazuh-agent`;
+  const winCmd = `Invoke-WebRequest -Uri "https://packages.wazuh.com/4.x/windows/wazuh-agent-latest.msi" -OutFile "wazuh-agent.msi"; msiexec /i wazuh-agent.msi /q WAZUH_MANAGER="wazuh.internal.aegis.com" WAZUH_AGENT_NAME="${agentHostname}"; Start-Service Wazuh`;
 
   const tabItems = [
     { key: 'alerts', label: `Alerts (${detail?.alerts.filter(a => a.status !== 'resolved').length || 0})` },

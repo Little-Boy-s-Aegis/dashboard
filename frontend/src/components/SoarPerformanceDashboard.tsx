@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import { Cpu, CheckCircle2, XCircle, Clock, RotateCw, Play, ShieldCheck, Zap } from 'lucide-react';
 import type { ActionLog, Alert } from '../types';
 
@@ -8,6 +8,10 @@ interface SoarMetrics {
   failedCount: number;
   successRate: number;
   avgResponseTimeSeconds: number;
+  slaUnder15Pct?: number;
+  slaUnder30Pct?: number;
+  slaOver30Pct?: number;
+  slaSampleCount?: number;
 }
 
 interface Props {
@@ -30,6 +34,7 @@ export default function SoarPerformanceDashboard({ actions, alerts }: Props) {
   const [loading, setLoading] = useState(true);
   const [autopilotEnabled, setAutopilotEnabled] = useState(false);
   const [bannedIPs, setBannedIPs] = useState<any[]>([]);
+  const [activeBanTotal, setActiveBanTotal] = useState(0);
   const [searchIP, setSearchIP] = useState('');
 
   const fetchMetrics = async () => {
@@ -72,12 +77,19 @@ export default function SoarPerformanceDashboard({ actions, alerts }: Props) {
     }
   };
 
-  const fetchBannedIPs = async () => {
+  const fetchBannedIPs = async (query = searchIP) => {
     try {
-      const res = await fetch('/api/banned-ips');
+      const params = new URLSearchParams({ limit: '250' });
+      const normalizedQuery = query.trim();
+      if (normalizedQuery) {
+        params.set('q', normalizedQuery);
+      }
+
+      const res = await fetch(`/api/banned-ips?${params.toString()}`);
       if (res.ok) {
         const data = await res.json();
         setBannedIPs(data || []);
+        setActiveBanTotal(Number(res.headers.get('X-Aegis-Total-Active-Bans') || data?.length || 0));
       }
     } catch (e) {
       console.error('Failed to fetch banned IPs:', e);
@@ -97,7 +109,7 @@ export default function SoarPerformanceDashboard({ actions, alerts }: Props) {
         })
       });
       if (res.ok) {
-        fetchBannedIPs();
+        fetchBannedIPs(searchIP);
       }
     } catch (e) {
       console.error('Failed to unblock IP:', e);
@@ -120,7 +132,7 @@ export default function SoarPerformanceDashboard({ actions, alerts }: Props) {
         })
       });
       if (res.ok) {
-        fetchBannedIPs();
+        fetchBannedIPs(searchIP);
       }
     } catch (e) {
       console.error('Failed to unban all IPs:', e);
@@ -130,38 +142,62 @@ export default function SoarPerformanceDashboard({ actions, alerts }: Props) {
   useEffect(() => {
     fetchMetrics();
     fetchSettings();
-    fetchBannedIPs();
-    const interval = setInterval(() => {
-      fetchMetrics();
-      fetchBannedIPs();
-    }, 5000);
+    const interval = setInterval(fetchMetrics, 10000);
     return () => clearInterval(interval);
   }, []);
 
-  if (loading || !metrics) {
-    return (
-      <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', minHeight: '300px', gap: 8 }}>
-        <RotateCw size={18} className="spin" style={{ color: 'var(--accent)' }} />
-        <span style={{ fontSize: '0.78rem', color: 'var(--text-3)', fontFamily: "'IBM Plex Mono', monospace" }}>CALCULATING PERFORMANCE METRICS...</span>
-      </div>
+  useEffect(() => {
+    const searchTimer = setTimeout(() => fetchBannedIPs(searchIP), 250);
+    const refreshTimer = setInterval(() => fetchBannedIPs(searchIP), 10000);
+    return () => {
+      clearTimeout(searchTimer);
+      clearInterval(refreshTimer);
+    };
+  }, [searchIP]);
+
+  const soarActions = useMemo(() => {
+    return (actions || []).filter(act =>
+      act && act.actor && SECURITY_ACTION_TYPES.has(act.actionType) && (act.actor.includes('SOAR') || act.actor.includes('AI'))
     );
-  }
+  }, [actions]);
 
-  // Filter actions handled by the SOAR engine
-  const soarActions = (actions || []).filter(act =>
-    act && act.actor && SECURITY_ACTION_TYPES.has(act.actionType) && (act.actor.includes('SOAR') || act.actor.includes('AI'))
-  );
+  const visibleSoarActions = useMemo(() => soarActions.slice(0, 100), [soarActions]);
 
-  const slaStats = (() => {
+  const activeBannedIPs = useMemo(() => {
+    return (bannedIPs || []).filter(ip => ip.status === 'active');
+  }, [bannedIPs]);
+
+  const slaStats = useMemo(() => {
+    if (metrics?.slaUnder30Pct !== undefined) {
+      return {
+        under15Pct: metrics.slaUnder15Pct ?? 0,
+        under30Pct: metrics.slaUnder30Pct ?? 100,
+        over30Pct: metrics.slaOver30Pct ?? 0,
+        total: metrics.slaSampleCount ?? 0
+      };
+    }
+
+    const alertsById = new Map<string, Alert>();
+    const recentAlerts = (alerts || []).slice(0, 500);
+    recentAlerts.forEach(alert => {
+      alertsById.set(alert.id, alert);
+      if (alert.ruleId?.startsWith('rule-soar-')) {
+        alertsById.set(alert.ruleId.replace('rule-soar-', ''), alert);
+      }
+      if (alert.ruleId?.startsWith('rule-sim-')) {
+        alertsById.set(alert.ruleId.replace('rule-sim-', ''), alert);
+      }
+    });
+
     let under15 = 0;
     let under30 = 0;
     let over30 = 0;
     let total = 0;
 
-    soarActions.forEach(act => {
-      const matchingAlert = (alerts || []).find(a => 
-        a && a.agentName && act.target && act.target.includes(a.agentName)
-      );
+    soarActions.slice(0, 200).forEach(act => {
+      const incidentIdMatch = act.message ? act.message.match(/Incident:\s*([a-zA-Z0-9_-]+)/) : null;
+      const incidentId = incidentIdMatch ? incidentIdMatch[1] : null;
+      const matchingAlert = incidentId ? alertsById.get(incidentId) : undefined;
 
       if (matchingAlert) {
         const duration = (new Date(act.timestamp).getTime() - new Date(matchingAlert.timestamp).getTime()) / 1000;
@@ -189,7 +225,16 @@ export default function SoarPerformanceDashboard({ actions, alerts }: Props) {
       over30Pct: Math.round((over30 / total) * 1000) / 10,
       total
     };
-  })();
+  }, [metrics, soarActions, alerts]);
+
+  if (loading || !metrics) {
+    return (
+      <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', minHeight: '300px', gap: 8 }}>
+        <RotateCw size={18} className="spin" style={{ color: 'var(--accent)' }} />
+        <span style={{ fontSize: '0.78rem', color: 'var(--text-3)', fontFamily: "'IBM Plex Mono', monospace" }}>CALCULATING PERFORMANCE METRICS...</span>
+      </div>
+    );
+  }
 
   return (
     <div style={{ animation: 'fadeInUp 0.25s ease-out', display: 'flex', flexDirection: 'column', gap: 16 }}>
@@ -332,11 +377,13 @@ export default function SoarPerformanceDashboard({ actions, alerts }: Props) {
               <Zap size={14} style={{ color: 'var(--accent)' }} />
               Automated Containment Actions History
             </span>
-            <span style={{ fontSize: '0.68rem', color: 'var(--text-3)', fontFamily: "'IBM Plex Mono', monospace" }}>{soarActions.length} Executed</span>
+            <span style={{ fontSize: '0.68rem', color: 'var(--text-3)', fontFamily: "'IBM Plex Mono', monospace" }}>
+              Showing {visibleSoarActions.length} / {soarActions.length}
+            </span>
           </div>
 
           <div style={{ padding: '12px', maxHeight: 'calc(100vh - 360px)', overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: 8 }}>
-            {soarActions.map(act => {
+            {visibleSoarActions.map(act => {
               const isSuccess = act.status === 'success';
               return (
                 <div key={act.id} style={{
@@ -367,7 +414,7 @@ export default function SoarPerformanceDashboard({ actions, alerts }: Props) {
                 </div>
               );
             })}
-            {soarActions.length === 0 && (
+            {visibleSoarActions.length === 0 && (
               <p style={{ textAlign: 'center', padding: '40px 0', color: 'var(--text-3)', fontSize: '0.8rem' }}>No automated actions logged yet.</p>
             )}
           </div>
@@ -442,7 +489,7 @@ export default function SoarPerformanceDashboard({ actions, alerts }: Props) {
             Auto-ban Registry & WAF IP Blocks
           </span>
           <span style={{ fontSize: '0.7rem', color: 'var(--text-3)', fontFamily: "'IBM Plex Mono', monospace" }}>
-            {bannedIPs.filter(ip => ip.status === 'active').length} Active Bans
+            {activeBanTotal} Active Bans
           </span>
         </div>
 
@@ -465,7 +512,7 @@ export default function SoarPerformanceDashboard({ actions, alerts }: Props) {
               outline: 'none'
             }} 
           />
-          {bannedIPs.filter(ip => ip.status === 'active').length > 0 && (
+          {activeBanTotal > 0 && (
             <button
               className="btn btn-outline"
               style={{
@@ -500,7 +547,7 @@ export default function SoarPerformanceDashboard({ actions, alerts }: Props) {
               </tr>
             </thead>
             <tbody>
-              {bannedIPs.filter(b => b.status === 'active' && (b.ipAddress.includes(searchIP) || (b.reason || '').toLowerCase().includes(searchIP.toLowerCase()))).map(b => (
+              {activeBannedIPs.map(b => (
                 <tr key={b.ipAddress} style={{ borderBottom: '1px solid var(--border-0)', color: 'var(--text-1)' }}>
                   <td style={{ padding: '10px 12px', fontWeight: 600, fontFamily: "'IBM Plex Mono', monospace" }}>{b.ipAddress}</td>
                   <td style={{ padding: '10px 12px', color: 'var(--text-3)' }}>
@@ -542,7 +589,7 @@ export default function SoarPerformanceDashboard({ actions, alerts }: Props) {
                   </td>
                 </tr>
               ))}
-              {bannedIPs.filter(b => b.status === 'active' && (b.ipAddress.includes(searchIP) || (b.reason || '').toLowerCase().includes(searchIP.toLowerCase()))).length === 0 && (
+              {activeBannedIPs.length === 0 && (
                 <tr>
                   <td colSpan={6} style={{ textAlign: 'center', padding: '30px 0', color: 'var(--text-3)' }}>
                     No active WAF IP blocks matching filter.
