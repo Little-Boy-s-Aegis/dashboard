@@ -1,8 +1,8 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { 
-  Terminal, Zap, Send, CheckCircle, XCircle, Server, Database, Key, MessageSquare
+  Terminal, Zap, Send, CheckCircle, XCircle, Server, Database, Key, MessageSquare, Monitor
 } from 'lucide-react';
-import type { Agent } from '../types';
+import type { Agent, Alert, ActionLog } from '../types';
 
 interface Props {
   agents: Agent[];
@@ -34,41 +34,69 @@ interface Conversation {
 }
 
 export default function OrchestratorChat({ agents }: Props) {
-  const [activeTab, setActiveTab] = useState<string>('agent-01');
+  const [activeTab, setActiveTab] = useState<string>(() => agents[0]?.id || 'agent-01');
   const [userInput, setUserInput] = useState<string>('');
-  const [conversations, setConversations] = useState<Record<string, Conversation>>({});
   const [isTyping, setIsTyping] = useState<boolean>(false);
   const [expandedDetailsId, setExpandedDetailsId] = useState<string | null>(null);
   const [inspectJsonMode, setInspectJsonMode] = useState<boolean>(true);
   
+  const [realAlerts, setRealAlerts] = useState<Alert[]>([]);
+  const [realActions, setRealActions] = useState<ActionLog[]>([]);
+  const [customMessages, setCustomMessages] = useState<Record<string, ChatMessage[]>>({});
+
   const chatEndRef = useRef<HTMLDivElement>(null);
 
-  // Initialize conversations with highly detailed mock security logs and SOAR reactions
+  // Fetch real-time security events & SOAR actions from the backend APIs
   useEffect(() => {
-    // Attempt to match with real agents if available, otherwise default to mock metadata
-    const webAgent = agents.find(a => a.name.toLowerCase().includes('web') || a.id === 'agent-01') || {
-      id: 'agent-01', name: 'Web-Prod-01', ip: '10.0.1.45', os: 'Ubuntu 22.04 LTS', threatScore: 85
-    };
-    const dbAgent = agents.find(a => a.name.toLowerCase().includes('db') || a.id === 'agent-02') || {
-      id: 'agent-02', name: 'DB-Internal-02', ip: '10.0.2.89', os: 'RedHat Enterprise 9', threatScore: 15
-    };
-    const authAgent = agents.find(a => a.name.toLowerCase().includes('auth') || a.id === 'agent-03') || {
-      id: 'agent-03', name: 'Auth-Gateway-03', ip: '10.0.0.12', os: 'Debian 11 Minimal', threatScore: 50
+    const fetchData = async () => {
+      try {
+        const [alertsRes, actionsRes] = await Promise.all([
+          fetch('/api/alerts'),
+          fetch('/api/actions')
+        ]);
+        if (alertsRes.ok) {
+          const alertsData = await alertsRes.json();
+          setRealAlerts(alertsData || []);
+        }
+        if (actionsRes.ok) {
+          const actionsData = await actionsRes.json();
+          setRealActions(actionsData || []);
+        }
+      } catch (e) {
+        console.error('OrchestratorChat backend fetch failed:', e);
+      }
     };
 
-    setConversations({
-      'agent-01': {
-        agentId: webAgent.id,
-        agentName: webAgent.name,
-        agentIp: webAgent.ip,
-        agentOs: webAgent.os,
-        agentIcon: <Server size={16} />,
-        messages: [
+    fetchData();
+    const interval = setInterval(fetchData, 3000);
+    return () => clearInterval(interval);
+  }, []);
+
+  // Compute conversations dynamically by merging baseline histories and live database events
+  const conversations = React.useMemo(() => {
+    const record: Record<string, Conversation> = {};
+
+    agents.forEach((agent) => {
+      // Determine node icon based on host role / name
+      let icon = <Monitor size={16} />;
+      const nameLower = agent.name.toLowerCase();
+      if (nameLower.includes('web')) {
+        icon = <Server size={16} />;
+      } else if (nameLower.includes('db') || nameLower.includes('replica')) {
+        icon = <Database size={16} />;
+      } else if (nameLower.includes('ad') || nameLower.includes('auth') || nameLower.includes('controller') || nameLower.includes('gateway')) {
+        icon = <Key size={16} />;
+      }
+
+      // 1. Build customized baseline conversation logs using correct Agent IP and OS
+      const baselineMessages: ChatMessage[] = [];
+      if (nameLower.includes('web')) {
+        baselineMessages.push(
           {
-            id: 'web-m1',
+            id: `${agent.id}-base-1`,
             sender: 'agent',
-            senderName: webAgent.name,
-            timestamp: new Date(Date.now() - 45 * 60000).toLocaleTimeString(),
+            senderName: agent.name,
+            timestamp: "08:15:32 PM",
             message: 'SECURITY ALERT: Nginx detected high frequency of SQL injection payloads hitting API endpoint /v1/auth/login.',
             details: JSON.stringify({
               log_source: "nginx-access-logger",
@@ -78,7 +106,7 @@ export default function OrchestratorChat({ agents }: Props) {
                 method: "POST",
                 path: "/v1/auth/login",
                 user_agent: "Mozilla/5.0 (Hydra-Scanner/v9.2)",
-                client_ip: "149.88.23.87",
+                client_ip: agent.ip || "192.168.10.11",
                 payload: "admin' OR '1'='1'--",
                 payload_hex: "61646d696e27204f52202731273d2731272d2d"
               },
@@ -87,23 +115,18 @@ export default function OrchestratorChat({ agents }: Props) {
             }, null, 2)
           },
           {
-            id: 'web-m2',
+            id: `${agent.id}-base-2`,
             sender: 'orchestrator',
             senderName: 'L2 SOAR Orchestrator (AI Triage)',
-            timestamp: new Date(Date.now() - 44 * 60000).toLocaleTimeString(),
-            message: 'AI Assessment: Threat verified. Attacker IP 149.88.23.87 is conducting active exploitation scanner against authentication route. Autopilot rule triggered: Containment Active.',
+            timestamp: "08:16:32 PM",
+            message: `AI Assessment: Threat verified. Attacker IP is conducting active exploitation scanner against ${agent.name}. Autopilot rule triggered: Containment Active.`,
             details: JSON.stringify({
               ai_triage: {
                 model: "Aegis-L2-Triage-Sonnet",
                 confidence_score: 0.99,
-                triage_summary: "Confirmed malicious SQL injection scanner. Signature matches Hydra-automated vulnerability scanner trying classic authentication bypass strings.",
+                triage_summary: `Confirmed malicious SQL injection scanner targeting ${agent.name}.`,
                 incident_risk_level: "High",
                 recommended_action: "Immediate Ingress Block at WAF / Edge Router"
-              },
-              mitre_mapping: {
-                tactic: "Exploitation for Privilege Escalation",
-                technique_id: "T1190",
-                technique_name: "Exploit Public-Facing Application"
               }
             }, null, 2),
             actionExecuted: {
@@ -118,34 +141,15 @@ export default function OrchestratorChat({ agents }: Props) {
                 arn: "arn:aws:wafv2:ap-southeast-1:080641082881:regional/ipset/aegis-blocked-ips/6844f0fb"
               }, null, 2)
             }
-          },
-          {
-            id: 'web-m3',
-            sender: 'agent',
-            senderName: webAgent.name,
-            timestamp: new Date(Date.now() - 30 * 60000).toLocaleTimeString(),
-            message: 'STATUS SYNC: Inbound HTTP traffic from IP 149.88.23.87 has dropped to 0. Threat mitigated. CPU usage stabilizing.',
-            details: JSON.stringify({
-              agent_status: "Healthy",
-              ingress_bps: 0,
-              cpu_utilization: 24.5,
-              active_threat_score: 12
-            }, null, 2)
           }
-        ]
-      },
-      'agent-02': {
-        agentId: dbAgent.id,
-        agentName: dbAgent.name,
-        agentIp: dbAgent.ip,
-        agentOs: dbAgent.os,
-        agentIcon: <Database size={16} />,
-        messages: [
+        );
+      } else if (nameLower.includes('db') || nameLower.includes('replica')) {
+        baselineMessages.push(
           {
-            id: 'db-m1',
+            id: `${agent.id}-base-1`,
             sender: 'agent',
-            senderName: dbAgent.name,
-            timestamp: new Date(Date.now() - 90 * 60000).toLocaleTimeString(),
+            senderName: agent.name,
+            timestamp: "08:17:41 PM",
             message: 'INTEGRITY REPORT: Syscheck detected unauthorized file modification in system configuration directories.',
             details: JSON.stringify({
               audit_type: "file_integrity_monitoring",
@@ -157,33 +161,27 @@ export default function OrchestratorChat({ agents }: Props) {
                 md5_old: "f9b88ef25b88cdeee21115",
                 md5_new: "3499fa1b5ef999bb3cdeee",
                 permission_diff: "-rw-r--r-- -> -rwxrwxrwx"
-              },
-              threat_indicators: [
-                "Unexpected daemon binary modifying configuration",
-                "Wide open file permissions added (777)"
-              ]
+              }
             }, null, 2)
           },
           {
-            id: 'db-m2',
+            id: `${agent.id}-base-2`,
             sender: 'orchestrator',
             senderName: 'L2 SOAR Orchestrator (AI Triage)',
-            timestamp: new Date(Date.now() - 89 * 60000).toLocaleTimeString(),
-            message: 'AI Assessment: Severity High. Modification to database host files allows broad network access to secure database. Autopilot rule triggered: Revert Configuration and Isolate Host.',
+            timestamp: "08:18:41 PM",
+            message: `AI Assessment: Severity High. Modification to database host files allows broad network access to secure database on ${agent.name}. Autopilot rule triggered: Revert Configuration and Isolate Host.`,
             details: JSON.stringify({
               ai_triage: {
                 model: "Aegis-L2-Triage-Sonnet",
                 confidence_score: 0.94,
-                triage_summary: "Suspicious pg_hba.conf modification. Added wide open connection access rules (host all all 0.0.0.0/0 trust). Indicates potential SQL privilege escalation or database hijacking attempt.",
-                incident_risk_level: "High",
-                recommended_action: "Revert configuration to master template, quarantine DB access from external gateway."
+                triage_summary: "pg_hba.conf connection access expanded. Potential database hijack attempt."
               }
             }, null, 2),
             actionExecuted: {
-              type: "AWS Security Group Quarantine",
-              target: dbAgent.ip,
+              type: "AWS Security Group quarantine",
+              target: agent.ip,
               status: "success",
-              message: "Successfully attached isolation security group sg-0dbdb0998 to EC2 Instance. Denied ingress/egress except for SOC debug subnet.",
+              message: `Successfully attached isolation security group sg-0dbdb0998 to EC2 Instance. Denied access except for SOC.`,
               payload: JSON.stringify({
                 target_instance_id: "i-099abccde121ff89f",
                 action: "ReplaceSecurityGroups",
@@ -193,72 +191,156 @@ export default function OrchestratorChat({ agents }: Props) {
             }
           },
           {
-            id: 'db-m3',
+            id: `${agent.id}-base-3`,
             sender: 'agent',
-            senderName: dbAgent.name,
-            timestamp: new Date(Date.now() - 88 * 60000).toLocaleTimeString(),
+            senderName: agent.name,
+            timestamp: "08:19:41 PM",
             message: 'INTEGRITY SYNC: Reverted /etc/postgresql/15/main/pg_hba.conf to default config from configuration master. Postgres restarted successfully.',
             details: JSON.stringify({
               reversion_status: "Successful",
-              md5_current: "f9b88ef25b88cdeee21115",
-              pg_service_status: "Active"
+              md5_current: "f9b88ef25b88cdeee21115"
             }, null, 2)
           }
-        ]
-      },
-      'agent-03': {
-        agentId: authAgent.id,
-        agentName: authAgent.name,
-        agentIp: authAgent.ip,
-        agentOs: authAgent.os,
-        agentIcon: <Key size={16} />,
-        messages: [
+        );
+      } else {
+        baselineMessages.push(
           {
-            id: 'auth-m1',
+            id: `${agent.id}-base-1`,
             sender: 'agent',
-            senderName: authAgent.name,
-            timestamp: new Date(Date.now() - 15 * 60000).toLocaleTimeString(),
+            senderName: agent.name,
+            timestamp: "08:20:15 PM",
             message: 'SECURITY ALERT: Multiple SSH login failures detected on root account from external address 104.28.163.100.',
             details: JSON.stringify({
               log_source: "pam_secure_logger",
               event_type: "auth_failure",
               user_targeted: "root",
               attempts_count_5s: 38,
-              client_ip: "104.28.163.100",
-              geo_ip: "United States (Cloudflare Routing)",
-              auth_method: "password"
+              client_ip: "104.28.163.100"
             }, null, 2)
           },
           {
-            id: 'auth-m2',
+            id: `${agent.id}-base-2`,
             sender: 'orchestrator',
             senderName: 'L2 SOAR Orchestrator (AI Triage)',
-            timestamp: new Date(Date.now() - 14 * 60000).toLocaleTimeString(),
-            message: 'AI Assessment: Severity Medium. Active brute-force attack targeting gateway ssh services. Autopilot containment initiated: Add IP to SOAR Blocklist.',
+            timestamp: "08:21:15 PM",
+            message: `AI Assessment: Severity Medium. Active brute-force attack targeting gateway ssh services on ${agent.name}. Autopilot containment initiated: Add IP to SOAR Blocklist.`,
             details: JSON.stringify({
               ai_triage: {
                 model: "Aegis-L2-Triage-Sonnet",
-                confidence_score: 0.88,
-                triage_summary: "Authentication brute force on SSH port 22. Highly suggestive of dictionary scan. Recommending ingress IP lock.",
-                recommended_action: "Deploy host ACL deny rule, block IP globally."
+                confidence_score: 0.88
               }
             }, null, 2),
             actionExecuted: {
               type: "Host iptables IP ban",
               target: "104.28.163.100",
               status: "success",
-              message: "Successfully synchronized local iptables blocklist. Added drop rule for 104.28.163.100.",
-              payload: JSON.stringify({
-                command: "iptables -A INPUT -s 104.28.163.100 -j DROP",
-                chain: "INPUT",
-                target_action: "DROP"
-              }, null, 2)
+              message: "Successfully synchronized local iptables blocklist. Added drop rule for 104.28.163.100."
             }
           }
-        ]
+        );
       }
+
+      // 2. Fetch and format live alerts from PostgreSQL matching this specific agent
+      const matchedAlerts = realAlerts.filter(a => 
+        a.agentId === agent.id || 
+        a.agentName === agent.name ||
+        (a.agentName && a.agentName.toLowerCase() === agent.name.toLowerCase())
+      );
+
+      const realMsgList: ChatMessage[] = [];
+      matchedAlerts.forEach((alert) => {
+        const alertTime = new Date(alert.timestamp).toLocaleTimeString();
+        const alertMsgId = `real-alert-${alert.id}`;
+
+        realMsgList.push({
+          id: alertMsgId,
+          sender: 'agent',
+          senderName: alert.agentName || agent.name,
+          timestamp: alertTime,
+          message: `SECURITY ALERT: ${alert.title}. ${alert.description}`,
+          details: JSON.stringify({
+            alert_id: alert.id,
+            rule_id: alert.ruleId,
+            severity: alert.severity,
+            mitre_technique: alert.mitreTechnique,
+            mitre_tactics: alert.mitreTactics,
+            raw_log: alert.rawLog
+          }, null, 2)
+        });
+
+        // 3. Find matching live SOAR response action executed by the orchestrator
+        const matchedAction = realActions.find(act => 
+          act.target === alert.agentId || 
+          act.target === agent.ip || 
+          (alert.rawLog && alert.rawLog.includes(act.target))
+        );
+
+        if (matchedAction) {
+          realMsgList.push({
+            id: `real-action-${matchedAction.id}`,
+            sender: 'orchestrator',
+            senderName: 'L2 SOAR Orchestrator (AI Triage)',
+            timestamp: new Date(matchedAction.timestamp).toLocaleTimeString(),
+            message: `AI Assessment: Threat detected on ${agent.name}. Severity ${alert.severity.toUpperCase()}. Autopilot rule triggered: ${matchedAction.actionType}.`,
+            details: JSON.stringify({
+              ai_triage: {
+                model: "Aegis-L2-Triage-Sonnet",
+                confidence_score: 0.96,
+                incident_risk_level: alert.severity === 'critical' || alert.severity === 'high' ? 'High' : 'Medium',
+                action: matchedAction.actionType
+              }
+            }, null, 2),
+            actionExecuted: {
+              type: matchedAction.actionType,
+              target: matchedAction.target,
+              status: matchedAction.status,
+              message: matchedAction.message,
+              payload: JSON.stringify({
+                action_id: matchedAction.id,
+                actor: matchedAction.actor,
+                target: matchedAction.target,
+                status: matchedAction.status,
+                message: matchedAction.message
+              }, null, 2)
+            }
+          });
+        } else {
+          realMsgList.push({
+            id: `real-ai-${alert.id}`,
+            sender: 'orchestrator',
+            senderName: 'L2 SOAR Orchestrator (AI Triage)',
+            timestamp: alertTime,
+            message: `AI Assessment: Incident registered on ${agent.name}. Threat level is ${alert.severity.toUpperCase()}. Monitoring host parameters for anomalies.`,
+            details: JSON.stringify({
+              ai_triage: {
+                model: "Aegis-L2-Triage-Sonnet",
+                confidence_score: 0.85,
+                incident_status: "monitoring"
+              }
+            }, null, 2)
+          });
+        }
+      });
+
+      record[agent.id] = {
+        agentId: agent.id,
+        agentName: agent.name,
+        agentIp: agent.ip,
+        agentOs: agent.os,
+        agentIcon: icon,
+        messages: [...baselineMessages, ...realMsgList, ...(customMessages[agent.id] || [])]
+      };
     });
-  }, [agents]);
+
+    return record;
+  }, [agents, realAlerts, realActions, customMessages]);
+
+  // Keep selected tab updated when agents load
+  useEffect(() => {
+    if (agents.length > 0 && !conversations[activeTab]) {
+      setActiveTab(agents[0].id);
+    }
+  }, [agents, conversations, activeTab]);
 
   // Scroll to bottom of chat when messages change
   useEffect(() => {
@@ -273,7 +355,7 @@ export default function OrchestratorChat({ agents }: Props) {
     const userMessageText = userInput;
     setUserInput('');
 
-    // Append User Message to active conversation
+    // Append User Message to active agent's customMessages state
     const userMsg: ChatMessage = {
       id: `usr-m-${Date.now()}`,
       sender: 'agent',
@@ -282,12 +364,9 @@ export default function OrchestratorChat({ agents }: Props) {
       message: userMessageText
     };
 
-    setConversations(prev => ({
+    setCustomMessages(prev => ({
       ...prev,
-      [currentTab]: {
-        ...prev[currentTab],
-        messages: [...prev[currentTab].messages, userMsg]
-      }
+      [currentTab]: [...(prev[currentTab] || []), userMsg]
     }));
 
     // Trigger AI Orchestrator Response Simulation after a short delay
@@ -300,57 +379,33 @@ export default function OrchestratorChat({ agents }: Props) {
       let mockAction: ChatMessage['actionExecuted'] = undefined;
 
       const lowerInput = userMessageText.toLowerCase();
+      const currentAgent = agents.find(a => a.id === currentTab) || { name: 'Agent', ip: '127.0.0.1' };
 
-      if (currentTab === 'agent-01') {
-        if (lowerInput.includes('status') || lowerInput.includes('check')) {
-          responseMsgText = 'Orchestrator AI Response: Web-Prod-01 status query parsed. Analyzing traffic metrics. WAF rule 2017 remains active. Attacker IP 149.88.23.87 remains blocked. Ingress latency is 4ms (nominal).';
-          responseDetails = JSON.stringify({
-            latency_check: "OK",
-            active_rules: ["WAF-2017-BLOCK-SQLI"],
-            health: "98/100"
-          }, null, 2);
-        } else if (lowerInput.includes('unban') || lowerInput.includes('clear')) {
-          responseMsgText = 'Orchestrator AI Action: Clear request authorized. Unblocking IP range 149.88.23.87 on AWS WAF.';
-          responseDetails = JSON.stringify({
-            action: "DeleteWafEntry",
-            ip: "149.88.23.87/32"
-          }, null, 2);
-          mockAction = {
-            type: "AWS WAF Unblock IP",
-            target: "149.88.23.87/32",
-            status: "success",
-            message: "Removed 149.88.23.87 from WAF WebACL block IP set."
-          };
-        } else {
-          responseMsgText = `Orchestrator AI Response: I have received your request regarding Web-Prod-01. I am currently running continuous packet analysis on ingress web traffic. No active threats detected at this time.`;
-          responseDetails = JSON.stringify({
-            last_analysis: new Date().toISOString(),
-            status: "Monitoring"
-          }, null, 2);
-        }
-      } else if (currentTab === 'agent-02') {
-        if (lowerInput.includes('quarantine') || lowerInput.includes('isolate') || lowerInput.includes('reconnect')) {
-          const isReconnecting = lowerInput.includes('reconnect');
-          responseMsgText = isReconnecting 
-            ? 'Orchestrator AI Action: Restoring network access to DB-Internal-02. Attaching default security group pg-default-db.' 
-            : 'Orchestrator AI Action: DB-Internal-02 remains in isolated security group. Only SOC debug traffic is authorized.';
-          
-          mockAction = {
-            type: isReconnecting ? "Restore Network" : "Quarantine Verification",
-            target: "DB-Internal-02",
-            status: "success",
-            message: isReconnecting 
-              ? "Replaced sg-aegis-quarantine-soc with sg-default-db on DB host."
-              : "Security Group quarantine validated. sg-aegis-quarantine-soc is attached."
-          };
-        } else {
-          responseMsgText = 'Orchestrator AI Response: DB-Internal-02 configuration integrity is normal. File integrity monitor is scanning `/etc/postgresql` every 5 minutes. No new modification events detected.';
-        }
-      } else if (currentTab === 'agent-03') {
-        responseMsgText = 'Orchestrator AI Response: Auth-Gateway-03 SSH monitoring active. Blocklist synced with 1 active iptables rule. Brute-force threats contained.';
+      if (lowerInput.includes('status') || lowerInput.includes('check')) {
+        responseMsgText = `Orchestrator AI Response: ${currentAgent.name} status query parsed. Core parameters checked. Threat level normal. CPU and latency values are within threshold.`;
         responseDetails = JSON.stringify({
-          active_blocklist_ips: ["104.28.163.100"],
-          ssh_attempts_10m: 0
+          check_timestamp: new Date().toISOString(),
+          status: "OK",
+          agent_ip: currentAgent.ip
+        }, null, 2);
+      } else if (lowerInput.includes('quarantine') || lowerInput.includes('isolate')) {
+        responseMsgText = `Orchestrator AI Action: Isolation authorized. Instigating quarantine rules for target ${currentAgent.name} (${currentAgent.ip}).`;
+        mockAction = {
+          type: "AWS Security Group Quarantine",
+          target: currentAgent.ip,
+          status: "success",
+          message: `Attached sg-aegis-quarantine-soc to ${currentAgent.name}. Disallowed normal ports ingress.`,
+          payload: JSON.stringify({
+            action: "Quarantine",
+            target_ip: currentAgent.ip,
+            target_name: currentAgent.name
+          }, null, 2)
+        };
+      } else {
+        responseMsgText = `Orchestrator AI Response: Message received for ${currentAgent.name}. Analysis complete. SOC prompt processed.`;
+        responseDetails = JSON.stringify({
+          received_message: userMessageText,
+          processed_at: new Date().toISOString()
         }, null, 2);
       }
 
@@ -364,12 +419,9 @@ export default function OrchestratorChat({ agents }: Props) {
         actionExecuted: mockAction
       };
 
-      setConversations(prev => ({
+      setCustomMessages(prev => ({
         ...prev,
-        [currentTab]: {
-          ...prev[currentTab],
-          messages: [...prev[currentTab].messages, orcMsg]
-        }
+        [currentTab]: [...(prev[currentTab] || []), orcMsg]
       }));
 
     }, 1500);
