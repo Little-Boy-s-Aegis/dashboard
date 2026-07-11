@@ -1,5 +1,5 @@
-import { useState, useEffect } from 'react';
-import { Shield, Monitor, AlertTriangle, RefreshCw, Activity, Play, TrendingUp, Cpu } from 'lucide-react';
+
+import { Shield, Monitor, AlertTriangle, RefreshCw, Activity, TrendingUp, Cpu } from 'lucide-react';
 import type { Agent, Alert, DashboardSummary, ActionLog } from '../types';
 import DashboardLogWorkbench from './DashboardLogWorkbench';
 
@@ -15,12 +15,6 @@ interface Props {
 }
 
 export default function DashboardOverview({ summary, recentAlerts, agents, actions, timeRange, setTimeRange, onNavigate, onSimulate }: Props) {
-  const [simAgent, setSimAgent] = useState('');
-  const [simType, setSimType] = useState('ransomware');
-  const [simulating, setSimulating] = useState(false);
-  const [simMsg, setSimMsg] = useState('');
-
-  useEffect(() => { if (agents.length > 0 && !simAgent) setSimAgent(agents[0].id); }, [agents, simAgent]);
 
   // Filter alerts by time window
   const filterByTimeRange = (alertTimestamp: string) => {
@@ -69,20 +63,7 @@ export default function DashboardOverview({ summary, recentAlerts, agents, actio
     return Object.values(m).sort((a, b) => b.count - a.count).slice(0, 5);
   })();
 
-  const handleSimulate = async () => {
-    if (!simAgent) return;
-    setSimulating(true);
-    setSimMsg('Injecting...');
-    try {
-      const res = await fetch('/api/simulate', {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ agentId: simAgent, type: simType })
-      });
-      if (res.ok) { const d = await res.json(); setSimMsg(`✓ ${d.alert.title}`); onSimulate(); }
-      else setSimMsg('✗ Failed');
-    } catch { setSimMsg('✗ Error'); }
-    finally { setSimulating(false); setTimeout(() => setSimMsg(''), 4000); }
-  };
+
 
   const techniqueNames: Record<string, string> = {
     'T1110': 'Brute Force',
@@ -557,26 +538,6 @@ export default function DashboardOverview({ summary, recentAlerts, agents, actio
             </div>
           </div>
 
-          {/* Simulator */}
-          <div className="glass-panel" style={{ padding: 16 }}>
-            <h3 style={{ fontSize: '0.85rem', color: 'var(--accent-dim)', marginBottom: 10 }}>Attack Simulator</h3>
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-              <label style={{ fontSize: '0.65rem', color: 'var(--text-3)', fontWeight: 600, letterSpacing: '0.06em', textTransform: 'uppercase' }}>Target</label>
-              <select className="select-input" value={simAgent} onChange={e => setSimAgent(e.target.value)} style={{ width: '100%' }}>
-                {agents.map(a => <option key={a.id} value={a.id}>{a.name} ({a.ip})</option>)}
-              </select>
-              <label style={{ fontSize: '0.65rem', color: 'var(--text-3)', fontWeight: 600, letterSpacing: '0.06em', textTransform: 'uppercase' }}>Vector</label>
-              <select className="select-input" value={simType} onChange={e => setSimType(e.target.value)} style={{ width: '100%' }}>
-                <option value="ransomware">Ransomware (VSS Delete)</option>
-                <option value="bruteforce">SSH Brute Force (T1110)</option>
-                <option value="malware">Credential Dump (Mimikatz)</option>
-              </select>
-              <button className="btn btn-primary" onClick={handleSimulate} disabled={simulating || !simAgent} style={{ width: '100%', marginTop: 4 }}>
-                <Play size={12} /> {simulating ? 'Injecting...' : 'Launch'}
-              </button>
-              {simMsg && <div style={{ padding: '8px 10px', background: 'var(--accent-bg)', border: '1px solid rgba(59,130,246,0.2)', fontSize: '0.78rem', color: 'var(--accent-dim)', fontFamily: "'IBM Plex Mono', monospace", borderRadius: 'var(--r-xs)', animation: 'fadeInUp 0.2s' }}>{simMsg}</div>}
-            </div>
-          </div>
 
           {/* Recent Alerts */}
           <div className="glass-panel" style={{ padding: 16, flex: 1, display: 'flex', flexDirection: 'column' }}>

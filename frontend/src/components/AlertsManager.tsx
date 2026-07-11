@@ -6,6 +6,11 @@ const getAttackerIp = (rawLog?: string): string => {
   if (!rawLog) return 'N/A';
   try {
     const parsed = JSON.parse(rawLog);
+    const l2Ip = parsed.verified_case?.entities?.ips?.[0] || 
+                 parsed.verifiedCase?.entities?.ips?.[0];
+    if (l2Ip && typeof l2Ip === 'string') {
+      return l2Ip;
+    }
     return parsed.clientIp || parsed.client_ip || parsed.sourceIp || parsed.source_ip || parsed.srcIp || parsed.ip || 'N/A';
   } catch {
     return 'N/A';
