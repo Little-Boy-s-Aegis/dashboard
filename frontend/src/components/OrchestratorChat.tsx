@@ -45,6 +45,7 @@ export default function OrchestratorChat({ agents }: Props) {
   const [customMessages, setCustomMessages] = useState<Record<string, ChatMessage[]>>({});
 
   const chatEndRef = useRef<HTMLDivElement>(null);
+  const jsonStreamRef = useRef<HTMLDivElement>(null);
 
   // Fetch real-time security events & SOAR actions from the backend APIs
   useEffect(() => {
@@ -372,9 +373,15 @@ export default function OrchestratorChat({ agents }: Props) {
     }
   }, [agents, conversations, activeTab]);
 
-  // Scroll to bottom of chat when messages change
+  // Scroll to bottom of chat and json stream when messages change
   useEffect(() => {
     chatEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+    if (jsonStreamRef.current) {
+      jsonStreamRef.current.scrollTo({
+        top: jsonStreamRef.current.scrollHeight,
+        behavior: 'smooth'
+      });
+    }
   }, [conversations, activeTab, isTyping]);
 
   const handleSendMessage = (e: React.FormEvent) => {
@@ -813,6 +820,7 @@ export default function OrchestratorChat({ agents }: Props) {
             {/* Right Column: Live JSON Inspector Stream */}
             {inspectJsonMode && (
               <div 
+                ref={jsonStreamRef}
                 style={{ 
                   width: '42%', 
                   background: '#04070d', 
