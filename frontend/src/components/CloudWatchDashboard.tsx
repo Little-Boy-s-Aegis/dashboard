@@ -911,8 +911,8 @@ export default function CloudWatchDashboard({ agents, recentAlerts }: Props) {
 
                 {/* METRICS specific configs */}
                 {formDataType === 'Metrics' && (
-                  <div style={{ display: 'grid', gridTemplateColumns: ['system_status', 'active_alerts', 'critical_alerts', 'agent_count'].includes(formMetricName) ? '1fr' : '1fr 1fr', gap: 12 }}>
-                    {!['system_status', 'active_alerts', 'critical_alerts', 'agent_count'].includes(formMetricName) && (
+                  <div style={{ display: 'grid', gridTemplateColumns: ['system_status', 'active_alerts', 'critical_alerts', 'high_alerts', 'medium_alerts', 'low_alerts', 'mitre_coverage', 'agent_count'].includes(formMetricName) ? '1fr' : '1fr 1fr', gap: 12 }}>
+                    {!['system_status', 'active_alerts', 'critical_alerts', 'high_alerts', 'medium_alerts', 'low_alerts', 'mitre_coverage', 'agent_count'].includes(formMetricName) && (
                       <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
                         <label style={{ fontSize: '0.72rem', color: 'var(--text-3)', fontWeight: 600 }}>TARGET HOST</label>
                         <select 
@@ -937,6 +937,10 @@ export default function CloudWatchDashboard({ agents, recentAlerts }: Props) {
                         <option value="system_status">System Status (Safe/Alerting)</option>
                         <option value="active_alerts">Active Alerts Count</option>
                         <option value="critical_alerts">Critical Alerts Count</option>
+                        <option value="high_alerts">High Alerts Count</option>
+                        <option value="medium_alerts">Medium Alerts Count</option>
+                        <option value="low_alerts">Low Alerts Count</option>
+                        <option value="mitre_coverage">MITRE Techniques Covered</option>
                         <option value="agent_count">Online Agents Count</option>
                       </select>
                     </div>
@@ -1040,7 +1044,7 @@ function WidgetContent({ widget, agents, recentAlerts }: ContentProps) {
   useEffect(() => {
     if (widget.dataType === 'Metrics') {
       let currentVal = 0;
-      const isSystemMetric = ['system_status', 'active_alerts', 'critical_alerts', 'agent_count'].includes(widget.metricName || '');
+      const isSystemMetric = ['system_status', 'active_alerts', 'critical_alerts', 'high_alerts', 'medium_alerts', 'low_alerts', 'mitre_coverage', 'agent_count'].includes(widget.metricName || '');
 
       if (isSystemMetric) {
         if (widget.metricName === 'system_status') {
@@ -1051,6 +1055,14 @@ function WidgetContent({ widget, agents, recentAlerts }: ContentProps) {
           currentVal = recentAlerts.filter(a => a.status !== 'resolved').length;
         } else if (widget.metricName === 'critical_alerts') {
           currentVal = recentAlerts.filter(a => a.status !== 'resolved' && a.severity === 'critical').length;
+        } else if (widget.metricName === 'high_alerts') {
+          currentVal = recentAlerts.filter(a => a.status !== 'resolved' && a.severity === 'high').length;
+        } else if (widget.metricName === 'medium_alerts') {
+          currentVal = recentAlerts.filter(a => a.status !== 'resolved' && a.severity === 'medium').length;
+        } else if (widget.metricName === 'low_alerts') {
+          currentVal = recentAlerts.filter(a => a.status !== 'resolved' && a.severity === 'low').length;
+        } else if (widget.metricName === 'mitre_coverage') {
+          currentVal = new Set(recentAlerts.map(a => a.mitreTechnique).filter(Boolean)).size;
         } else if (widget.metricName === 'agent_count') {
           currentVal = agents.filter(a => a.status === 'active' || a.status === 'alerting').length;
         }
@@ -1236,7 +1248,7 @@ function WidgetContent({ widget, agents, recentAlerts }: ContentProps) {
 
   // RENDER METRICS
   if (widget.dataType === 'Metrics') {
-    const isSystemMetric = ['system_status', 'active_alerts', 'critical_alerts', 'agent_count'].includes(widget.metricName || '');
+    const isSystemMetric = ['system_status', 'active_alerts', 'critical_alerts', 'high_alerts', 'medium_alerts', 'low_alerts', 'mitre_coverage', 'agent_count'].includes(widget.metricName || '');
 
     if (!targetAgent && !isSystemMetric) {
       return (
@@ -1268,6 +1280,26 @@ function WidgetContent({ widget, agents, recentAlerts }: ContentProps) {
         metricValue = count;
         suffix = '';
         color = count > 0 ? 'var(--critical)' : 'var(--low)';
+      } else if (widget.metricName === 'high_alerts') {
+        const count = recentAlerts.filter(a => a.status !== 'resolved' && a.severity === 'high').length;
+        metricValue = count;
+        suffix = '';
+        color = 'var(--high)';
+      } else if (widget.metricName === 'medium_alerts') {
+        const count = recentAlerts.filter(a => a.status !== 'resolved' && a.severity === 'medium').length;
+        metricValue = count;
+        suffix = '';
+        color = 'var(--medium)';
+      } else if (widget.metricName === 'low_alerts') {
+        const count = recentAlerts.filter(a => a.status !== 'resolved' && a.severity === 'low').length;
+        metricValue = count;
+        suffix = '';
+        color = 'var(--low)';
+      } else if (widget.metricName === 'mitre_coverage') {
+        const count = new Set(recentAlerts.map(a => a.mitreTechnique).filter(Boolean)).size;
+        metricValue = count;
+        suffix = ' Techs';
+        color = 'var(--purple)';
       } else if (widget.metricName === 'agent_count') {
         metricValue = agents.filter(a => a.status === 'active' || a.status === 'alerting').length;
         suffix = ` / ${agents.length}`;
