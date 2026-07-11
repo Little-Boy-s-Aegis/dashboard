@@ -47,7 +47,8 @@ export default function OrchestratorChat({ agents }: Props) {
   const chatEndRef = useRef<HTMLDivElement>(null);
   const jsonStreamRef = useRef<HTMLDivElement>(null);
   const chatScrollContainerRef = useRef<HTMLDivElement>(null);
-  const activeScrollSource = useRef<'chat' | 'json' | null>(null);
+  const ignoreScrollRef = useRef<HTMLDivElement | null>(null);
+  const [activeMessageId, setActiveMessageId] = useState<string | null>(null);
 
   // Fetch real-time security events & SOAR actions from the backend APIs
   useEffect(() => {
@@ -418,10 +419,14 @@ export default function OrchestratorChat({ agents }: Props) {
   }, [conversations, activeTab, isTyping]);
 
   const handleChatScroll = () => {
-    if (activeScrollSource.current !== 'chat') return;
     if (chatScrollContainerRef.current && jsonStreamRef.current) {
       const chatEl = chatScrollContainerRef.current;
       const jsonEl = jsonStreamRef.current;
+
+      if (ignoreScrollRef.current === chatEl) {
+        ignoreScrollRef.current = null;
+        return;
+      }
 
       const chatRect = chatEl.getBoundingClientRect();
       const chatChildren = Array.from(chatEl.children);
@@ -446,6 +451,8 @@ export default function OrchestratorChat({ agents }: Props) {
           const rightRect = rightEl.getBoundingClientRect();
           const jsonRect = jsonEl.getBoundingClientRect();
           const currentAlignDiff = rightRect.top - jsonRect.top;
+          
+          ignoreScrollRef.current = jsonEl;
           jsonEl.scrollTop = jsonEl.scrollTop + currentAlignDiff + offsetDiff;
         }
       }
@@ -453,10 +460,14 @@ export default function OrchestratorChat({ agents }: Props) {
   };
 
   const handleJsonScroll = () => {
-    if (activeScrollSource.current !== 'json') return;
     if (chatScrollContainerRef.current && jsonStreamRef.current) {
       const chatEl = chatScrollContainerRef.current;
       const jsonEl = jsonStreamRef.current;
+
+      if (ignoreScrollRef.current === jsonEl) {
+        ignoreScrollRef.current = null;
+        return;
+      }
 
       const jsonRect = jsonEl.getBoundingClientRect();
       const jsonChildren = Array.from(jsonEl.children);
@@ -481,6 +492,8 @@ export default function OrchestratorChat({ agents }: Props) {
           const leftRect = leftEl.getBoundingClientRect();
           const chatRect = chatEl.getBoundingClientRect();
           const currentAlignDiff = leftRect.top - chatRect.top;
+          
+          ignoreScrollRef.current = chatEl;
           chatEl.scrollTop = chatEl.scrollTop + currentAlignDiff + offsetDiff;
         }
       }
@@ -730,20 +743,30 @@ export default function OrchestratorChat({ agents }: Props) {
             <div style={{ display: 'flex', flexDirection: 'column', flex: 1, borderRight: inspectJsonMode ? '1px solid var(--border-1)' : undefined, minWidth: 0, height: '100%', minHeight: 0, overflow: 'hidden' }}>
               
               {/* Messages Feed Area */}
-              <div ref={chatScrollContainerRef} onScroll={handleChatScroll} onMouseEnter={() => { activeScrollSource.current = 'chat'; }} style={{ flex: 1, overflowY: 'auto', padding: 16, display: 'flex', flexDirection: 'column', gap: 14, position: 'relative' }}>
+              <div 
+                ref={chatScrollContainerRef} 
+                onScroll={handleChatScroll} 
+                style={{ flex: 1, overflowY: 'auto', padding: 16, display: 'flex', flexDirection: 'column', gap: 14, position: 'relative' }}
+              >
                 
                 {activeConv?.messages.map((m) => {
                   const isOrchestrator = m.sender === 'orchestrator';
+                  const isHighlighted = activeMessageId === m.id;
                   return (
                     <div 
                       id={`msg-left-${m.id}`}
                       key={m.id}
+                      onMouseEnter={() => setActiveMessageId(m.id)}
+                      onMouseLeave={() => setActiveMessageId(null)}
+                      onClick={() => setActiveMessageId(m.id)}
                       style={{
                         display: 'flex',
                         flexDirection: 'column',
                         alignItems: isOrchestrator ? 'flex-end' : 'flex-start',
                         maxWidth: '85%',
-                        alignSelf: isOrchestrator ? 'flex-end' : 'flex-start'
+                        alignSelf: isOrchestrator ? 'flex-end' : 'flex-start',
+                        transition: 'opacity 0.2s ease',
+                        opacity: activeMessageId && !isHighlighted ? 0.6 : 1
                       }}
                     >
                       {/* Sender Name & Time */}
@@ -769,14 +792,22 @@ export default function OrchestratorChat({ agents }: Props) {
                       {/* Message Bubble */}
                       <div
                         style={{
-                          background: isOrchestrator ? 'rgba(255, 153, 0, 0.08)' : 'rgba(255,255,255,0.03)',
-                          border: isOrchestrator ? '1px solid rgba(255, 153, 0, 0.25)' : '1px solid var(--border-0)',
+                          background: isHighlighted
+                            ? 'rgba(255, 153, 0, 0.16)'
+                            : (isOrchestrator ? 'rgba(255, 153, 0, 0.08)' : 'rgba(255,255,255,0.03)'),
+                          border: isHighlighted
+                            ? '1px solid #ff9900'
+                            : (isOrchestrator ? '1px solid rgba(255, 153, 0, 0.25)' : '1px solid var(--border-0)'),
                           borderRadius: 'var(--r-md)',
                           padding: '10px 12px',
                           fontSize: '0.78rem',
                           color: 'var(--text-1)',
                           lineHeight: 1.4,
-                          boxShadow: isOrchestrator ? '0 4px 12px rgba(255, 153, 0, 0.03)' : '0 4px 12px rgba(0,0,0,0.05)'
+                          boxShadow: isHighlighted
+                            ? '0 0 12px rgba(255, 153, 0, 0.25)'
+                            : (isOrchestrator ? '0 4px 12px rgba(255, 153, 0, 0.03)' : '0 4px 12px rgba(0,0,0,0.05)'),
+                          transition: 'all 0.15s ease',
+                          cursor: 'pointer'
                         }}
                       >
                         <div>{m.message}</div>
@@ -926,7 +957,6 @@ export default function OrchestratorChat({ agents }: Props) {
               <div 
                 ref={jsonStreamRef}
                 onScroll={handleJsonScroll}
-                onMouseEnter={() => { activeScrollSource.current = 'json'; }}
                 style={{ 
                   width: '42%', 
                   background: '#04070d', 
@@ -957,22 +987,30 @@ export default function OrchestratorChat({ agents }: Props) {
                   activeConv.messages.map((m) => {
                     const hasJson = m.details || (m.actionExecuted && m.actionExecuted.payload);
                     const isOrchestrator = m.sender === 'orchestrator';
+                    const isHighlighted = activeMessageId === m.id;
 
                     if (!hasJson) {
                       return (
                         <div 
                           id={`msg-right-${m.id}`}
-                          key={`stream-placeholder-${m.id}`} 
+                          key={`stream-placeholder-${m.id}`}
+                          onMouseEnter={() => setActiveMessageId(m.id)}
+                          onMouseLeave={() => setActiveMessageId(null)}
+                          onClick={() => setActiveMessageId(m.id)}
                           style={{ 
                             fontSize: '0.62rem', 
-                            color: 'rgba(255,255,255,0.22)', 
-                            background: 'rgba(255,255,255,0.01)', 
-                            border: '1px dashed rgba(255,255,255,0.02)', 
+                            color: isHighlighted ? '#ff9900' : 'rgba(255,255,255,0.22)', 
+                            background: isHighlighted ? 'rgba(255, 153, 0, 0.05)' : 'rgba(255,255,255,0.01)', 
+                            border: isHighlighted ? '1px solid rgba(255, 153, 0, 0.4)' : '1px dashed rgba(255,255,255,0.02)', 
                             borderRadius: 4, 
                             padding: '6px 10px',
                             display: 'flex',
                             justifyContent: 'space-between',
-                            alignItems: 'center'
+                            alignItems: 'center',
+                            cursor: 'pointer',
+                            transition: 'all 0.15s ease',
+                            boxShadow: isHighlighted ? '0 0 8px rgba(255, 153, 0, 0.15)' : 'none',
+                            opacity: activeMessageId && !isHighlighted ? 0.6 : 1
                           }}
                         >
                           <span style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
@@ -989,16 +1027,23 @@ export default function OrchestratorChat({ agents }: Props) {
                     return (
                       <div 
                         id={`msg-right-${m.id}`}
-                        key={`stream-${m.id}`} 
+                        key={`stream-${m.id}`}
+                        onMouseEnter={() => setActiveMessageId(m.id)}
+                        onMouseLeave={() => setActiveMessageId(null)}
+                        onClick={() => setActiveMessageId(m.id)}
                         style={{ 
                           fontSize: '0.66rem', 
-                          background: 'rgba(255,255,255,0.01)', 
-                          border: '1px solid rgba(255,255,255,0.04)', 
+                          background: isHighlighted ? 'rgba(255, 153, 0, 0.04)' : 'rgba(255,255,255,0.01)', 
+                          border: isHighlighted ? '1px solid #ff9900' : '1px solid rgba(255,255,255,0.04)', 
                           borderRadius: 4, 
                           padding: 10,
                           display: 'flex',
                           flexDirection: 'column',
-                          gap: 6
+                          gap: 6,
+                          cursor: 'pointer',
+                          transition: 'all 0.15s ease',
+                          boxShadow: isHighlighted ? '0 0 12px rgba(255, 153, 0, 0.25)' : 'none',
+                          opacity: activeMessageId && !isHighlighted ? 0.6 : 1
                         }}
                       >
                         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderBottom: '1px dashed rgba(255,255,255,0.05)', paddingBottom: 4 }}>
