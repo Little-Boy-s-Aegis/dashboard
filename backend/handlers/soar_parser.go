@@ -63,8 +63,8 @@ func ParseSoarDecision(payload []byte) (*SoarDecisionPayload, *ParsedSoarInfo, e
 		return nil, nil, fmt.Errorf("JSON decoding error: %w", err)
 	}
 
-	if dec.SchemaVersion != "littleboy.soc.layer2.orchestrator_decision.v7" {
-		return nil, nil, fmt.Errorf("unsupported schema version: expected littleboy.soc.layer2.orchestrator_decision.v7, got %s", dec.SchemaVersion)
+	if dec.SchemaVersion != "littleboy.soc.layer2.orchestrator_decision.v7" && dec.SchemaVersion != "littleboy.soc.layer2.orchestrator_decision.v8" {
+		return nil, nil, fmt.Errorf("unsupported schema version: expected v7 or v8, got %s", dec.SchemaVersion)
 	}
 
 	info := &ParsedSoarInfo{

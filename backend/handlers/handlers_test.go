@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 
 	"dashboard/backend/models"
 	"dashboard/backend/store"
@@ -446,13 +447,61 @@ func TestSimulationAndActions(t *testing.T) {
 		protected := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			w.WriteHeader(http.StatusOK)
 		})
+		authMu.Lock()
+		sessionStore["blocked-session-token"] = sessionData{
+			UID:       "10001",
+			Username:  "admin",
+			IPAddress: "198.51.100.222",
+			ExpiresAt: time.Now().Add(time.Hour),
+		}
+		authMu.Unlock()
 		banChecked := IPBanMiddleware(protected)
 		blockedReq := httptest.NewRequest("GET", "/api/summary", nil)
 		blockedReq.RemoteAddr = "198.51.100.222:45678"
+		blockedReq.AddCookie(&http.Cookie{Name: "session_token", Value: "blocked-session-token"})
 		blockedResp := httptest.NewRecorder()
 		banChecked.ServeHTTP(blockedResp, blockedReq)
 		if blockedResp.Code != http.StatusForbidden {
 			t.Errorf("Expected banned IP middleware status 403, got %d", blockedResp.Code)
+		}
+		if blockedResp.Header().Get("X-Aegis-IP-Banned") != "true" {
+			t.Error("Expected banned IP response marker header")
+		}
+		authMu.RLock()
+		_, stillActive := sessionStore["blocked-session-token"]
+		authMu.RUnlock()
+		if stillActive {
+			t.Fatal("Expected banned IP middleware to revoke the active session")
+		}
+	})
+
+	t.Run("Perform Action - Unblock All IPs clears all active bans", func(t *testing.T) {
+		setupTestStores()
+		store.DB.Mu.Lock()
+		store.DB.BannedIPs["198.51.100.111"] = &models.BannedIP{
+			IPAddress: "198.51.100.111",
+			Status:    "active",
+		}
+		store.DB.BannedIPs["198.51.100.222"] = &models.BannedIP{
+			IPAddress: "198.51.100.222",
+			Status:    "active",
+		}
+		store.DB.Mu.Unlock()
+
+		payload := `{"actionType":"Unblock All IPs","target":"ALL"}`
+		req := httptest.NewRequest("POST", "/api/actions", bytes.NewBufferString(payload))
+		w := httptest.NewRecorder()
+		PerformAction(w, req)
+		if w.Code != http.StatusOK {
+			t.Errorf("Expected status 200, got %d", w.Code)
+		}
+
+		store.DB.Mu.RLock()
+		bannedCount := len(store.DB.BannedIPs)
+		store.DB.Mu.RUnlock()
+
+		if bannedCount != 0 {
+			t.Errorf("Expected 0 banned IPs after Unblock All IPs, got %d", bannedCount)
 		}
 	})
 

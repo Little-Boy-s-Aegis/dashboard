@@ -12,7 +12,7 @@ interface Props {
   currentUser?: string;
 }
 
-const ACTION_TYPES = ['Isolate Host', 'Block IP', 'Terminate Process', 'Revoke Credentials'];
+const ACTION_TYPES = ['Isolate Host', 'Block IP', 'Unblock IP', 'Terminate Process', 'Revoke Credentials'];
 
 export default function ResponseCenter({ agents, alerts, actions, timeRange, setTimeRange, onRefresh, currentUser }: Props) {
   const [actor, setActor] = useState(currentUser ? `SOC (${currentUser})` : 'SOC (Sarah Connor)');

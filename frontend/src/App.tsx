@@ -12,6 +12,7 @@ import Login from './components/Login';
 
 export default function App() {
   const [isAuthenticated, setIsAuthenticated] = useState<boolean | null>(null);
+  const [isIpBanned, setIsIpBanned] = useState(false);
   const [user, setUser] = useState<string>('');
   const [activeTab, setActiveTab] = useState<string>(() => localStorage.getItem('activeTab') || 'overview');
   const [timeRange, setTimeRange] = useState<string>(() => localStorage.getItem('timeRange') || '24h');
@@ -47,6 +48,16 @@ export default function App() {
       }
     };
     verify();
+  }, []);
+
+  useEffect(() => {
+    const handleIpBanned = () => {
+      setUser('');
+      setIsAuthenticated(false);
+      setIsIpBanned(true);
+    };
+    window.addEventListener('aegis-ip-banned', handleIpBanned);
+    return () => window.removeEventListener('aegis-ip-banned', handleIpBanned);
   }, []);
 
   useEffect(() => {
@@ -90,6 +101,20 @@ export default function App() {
       refreshAllData();
       const interval = setInterval(refreshAllData, 3000);
       return () => clearInterval(interval);
+    }
+  }, [isAuthenticated]);
+
+  // Fast ban check interval (1s) to immediately trigger the ban screen if client IP is blocked
+  useEffect(() => {
+    if (isAuthenticated === true) {
+      const banCheckInterval = setInterval(async () => {
+        try {
+          await fetch('/api/auth/check');
+        } catch (e) {
+          // Ignore network errors during fast checking
+        }
+      }, 1000);
+      return () => clearInterval(banCheckInterval);
     }
   }, [isAuthenticated]);
 
@@ -137,11 +162,53 @@ export default function App() {
     { key: 'overview', icon: Activity, label: 'Overview' },
     { key: 'alerts', icon: AlertTriangle, label: 'Alerts', badge: totalActive },
     { key: 'actions', icon: Zap, label: 'Response Center' },
-    { key: 'soar-metrics', icon: Cpu, label: 'SOAR Performance' },
+    { key: 'soar-metrics', icon: Cpu, label: 'SOAR & Ban Registry' },
     { key: 'agents', icon: Monitor, label: 'Hosts' },
     { key: 'fim', icon: FileText, label: 'File Integrity' },
     { key: 'logs', icon: Terminal, label: 'Logs' },
   ];
+
+  if (isIpBanned) {
+    return (
+      <div style={{
+        minHeight: '100vh',
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        background: 'var(--bg-body)',
+        padding: 24
+      }}>
+        <div className="glass-panel" style={{
+          width: '100%',
+          maxWidth: 560,
+          padding: 32,
+          borderColor: 'rgba(244, 63, 94, 0.35)',
+          boxShadow: '0 24px 80px rgba(0,0,0,0.35)'
+        }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 18 }}>
+            <Shield size={22} style={{ color: 'var(--critical)' }} />
+            <span style={{
+              fontSize: '0.68rem',
+              color: 'var(--critical-dim)',
+              fontWeight: 700,
+              letterSpacing: '0.18em',
+              textTransform: 'uppercase',
+              fontFamily: "'IBM Plex Mono', monospace"
+            }}>
+              403 IP Banned
+            </span>
+          </div>
+          <h1 style={{ fontSize: '1.8rem', marginBottom: 12 }}>Access revoked</h1>
+          <p style={{ marginBottom: 8 }}>
+            This IP address has been blocked by the Aegis SOC security policy.
+          </p>
+          <p>
+            Your active SOC session has been revoked and browser authentication state has been cleared.
+          </p>
+        </div>
+      </div>
+    );
+  }
 
   if (isAuthenticated === null) {
     return (

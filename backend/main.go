@@ -12,6 +12,7 @@ import (
 
 	"dashboard/backend/consumer"
 	"dashboard/backend/handlers"
+	"dashboard/backend/models"
 	"dashboard/backend/processor"
 	"dashboard/backend/store"
 )
@@ -127,6 +128,17 @@ func main() {
 	// Initialize Database (PostgreSQL with In-Memory fallback)
 	store.InitDB()
 
+	store.RegisterSecurityAlertHook(func(alert *models.Alert) {
+		result, err := handlers.ExecuteAlertAutobanFromOrchestrator(alert, "security-alert-ingest")
+		if err != nil {
+			log.Printf("[SOAR AUTOBAN] Alert %s failed: %v", alert.ID, err)
+			return
+		}
+		if result != nil && result.Status == "executed" {
+			log.Printf("[SOAR AUTOBAN] Alert %s executed automatic containment for IP %s", alert.ID, result.SourceIP)
+		}
+	})
+
 	// Start Kafka Consumer for real-time security event ingestion
 	consumer.StartKafkaConsumer(context.Background())
 
@@ -155,7 +167,9 @@ func main() {
 			w.WriteHeader(http.StatusOK)
 			return
 		}
-		if strings.HasSuffix(r.URL.Path, "/analyze") {
+		if strings.HasSuffix(r.URL.Path, "/orchestrated-ban") {
+			handlers.OrchestrateAlertBan(w, r)
+		} else if strings.HasSuffix(r.URL.Path, "/analyze") {
 			handlers.AnalyzeAlert(w, r)
 		} else if strings.HasSuffix(r.URL.Path, "/analysis") {
 			handlers.SaveAIAnalysis(w, r)

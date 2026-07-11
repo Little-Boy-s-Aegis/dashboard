@@ -32,6 +32,82 @@ type Database struct {
 }
 
 var DB *Database
+var (
+	securityAlertHookMu sync.RWMutex
+	securityAlertHook   func(*models.Alert)
+)
+
+func RegisterSecurityAlertHook(hook func(*models.Alert)) {
+	securityAlertHookMu.Lock()
+	defer securityAlertHookMu.Unlock()
+	securityAlertHook = hook
+}
+
+func NotifySecurityAlert(alert *models.Alert) {
+	if alert == nil {
+		return
+	}
+
+	securityAlertHookMu.RLock()
+	hook := securityAlertHook
+	securityAlertHookMu.RUnlock()
+	if hook == nil {
+		return
+	}
+
+	alertCopy := *alert
+	hook(&alertCopy)
+}
+
+func SecurityAlertSeverity(attackType string, status string, payload string, description string) string {
+	statusUpper := strings.ToUpper(strings.TrimSpace(status))
+	if IsSQLInjectionText(attackType, payload, description) {
+		if statusUpper == "ALLOWED" {
+			return "high"
+		}
+		return "medium"
+	}
+	if statusUpper == "ALLOWED" {
+		return "critical"
+	}
+	return "high"
+}
+
+func IsSQLInjectionText(parts ...string) bool {
+	for _, part := range parts {
+		normalized := strings.ToUpper(part)
+		if strings.Contains(normalized, "SQL_INJECTION") ||
+			strings.Contains(normalized, "SQL INJECTION") ||
+			strings.Contains(normalized, "SQLI") {
+			return true
+		}
+	}
+	return false
+}
+
+func IsPersistentSecurityActionType(actionType string) bool {
+	switch strings.TrimSpace(actionType) {
+	case "Block IP", "Unblock IP", "Unblock All IPs", "Isolate Host", "Terminate Process", "Revoke Credentials", "Force Logout":
+		return true
+	default:
+		return false
+	}
+}
+
+func ShouldPersistSecurityLog(entry *models.LogEntry) bool {
+	if entry == nil {
+		return false
+	}
+	if entry.ThreatFlagged {
+		return true
+	}
+	switch strings.ToLower(strings.TrimSpace(entry.Severity)) {
+	case "critical", "high", "medium", "alert", "error":
+		return true
+	default:
+		return false
+	}
+}
 
 func init() {
 	DB = &Database{
@@ -89,7 +165,7 @@ func populateECSFields(entry *models.LogEntry) {
 func (db *Database) AddLog(entry *models.LogEntry) {
 	populateECSFields(entry)
 	db.Logs = append(db.Logs, entry)
-	if UsePostgres {
+	if UsePostgres && ShouldPersistSecurityLog(entry) {
 		_ = SaveSQLLogEntry(entry)
 	}
 }
@@ -398,6 +474,11 @@ func (db *Database) persistSeed() {
 			for _, act := range loadedActions {
 				var suffix int
 				if _, err := fmt.Sscanf(act.ID, "act-%d", &suffix); err == nil {
+					if suffix > maxVal {
+						maxVal = suffix
+					}
+				}
+				if _, err := fmt.Sscanf(act.ID, "act-soar-%d", &suffix); err == nil {
 					if suffix > maxVal {
 						maxVal = suffix
 					}
@@ -900,9 +981,9 @@ func (db *Database) syncBankSecurityLogs() {
 	}
 
 	db.Mu.Lock()
-	defer db.Mu.Unlock()
 
 	hasNewAlerts := false
+	alertsForHook := make([]*models.Alert, 0)
 	for i := len(logs) - 1; i >= 0; i-- {
 		logItem := logs[i]
 		if logItem.ID > lastIngestedBankLogID {
@@ -910,8 +991,9 @@ func (db *Database) syncBankSecurityLogs() {
 
 			mitreTech := "T1190"
 			mitreTactics := []string{"Initial Access"}
-			severity := "high"
-			if strings.ToUpper(logItem.Status) == "ALLOWED" || strings.Contains(strings.ToLower(logItem.Payload), "admin") || strings.Contains(strings.ToLower(logItem.Description), "admin") {
+			severity := SecurityAlertSeverity(logItem.AttackType, logItem.Status, logItem.Payload, logItem.Description)
+			if !IsSQLInjectionText(logItem.AttackType, logItem.Payload, logItem.Description) &&
+				(strings.Contains(strings.ToLower(logItem.Payload), "admin") || strings.Contains(strings.ToLower(logItem.Description), "admin")) {
 				severity = "critical"
 			}
 
@@ -939,7 +1021,18 @@ func (db *Database) syncBankSecurityLogs() {
 				db.SaveAgent(agent)
 			}
 
-			db.AddAlert(&models.Alert{
+			rawLogBytes, _ := json.Marshal(map[string]string{
+				"timestamp":   time.Now().Format(time.RFC3339),
+				"attack_type": logItem.AttackType,
+				"attackType":  logItem.AttackType,
+				"endpoint":    logItem.Endpoint,
+				"payload":     logItem.Payload,
+				"status":      logItem.Status,
+				"client_ip":   logItem.ClientIP,
+				"clientIp":    logItem.ClientIP,
+				"description": logItem.Description,
+			})
+			alert := &models.Alert{
 				ID:             alertID,
 				RuleID:         fmt.Sprintf("rule-bank-%03d", logItem.ID),
 				Severity:       severity,
@@ -951,20 +1044,24 @@ func (db *Database) syncBankSecurityLogs() {
 				MITRETactics:   mitreTactics,
 				Category:       "web",
 				Timestamp:      time.Now(),
-				RawLog:         fmt.Sprintf(`{"timestamp":"%s","attack_type":"%s","endpoint":"%s","payload":"%s","status":"%s","client_ip":"%s","description":"%s"}`, time.Now().Format(time.RFC3339), logItem.AttackType, logItem.Endpoint, logItem.Payload, logItem.Status, logItem.ClientIP, logItem.Description),
+				RawLog:         string(rawLogBytes),
 				Status:         "open",
-			})
+			}
+			db.AddAlert(alert)
+			alertsForHook = append(alertsForHook, alert)
 
 			db.LogCounter++
 			db.AddLog(&models.LogEntry{
-				ID:        fmt.Sprintf("log-%05d", db.LogCounter),
-				Timestamp: time.Now(),
-				AgentID:   "agent-01",
-				AgentName: "Web-Prod-01",
-				Facility:  "web",
-				Severity:  severity,
-				Message:   fmt.Sprintf("BANK SECURITY ALARM: %s payload detected on %s from IP %s. Status: %s. Detail: %s", logItem.AttackType, logItem.Endpoint, logItem.ClientIP, logItem.Status, logItem.Description),
-				SourceIP:  logItem.ClientIP,
+				ID:            fmt.Sprintf("log-%05d", db.LogCounter),
+				Timestamp:     time.Now(),
+				AgentID:       "agent-01",
+				AgentName:     "Web-Prod-01",
+				Facility:      "web",
+				Severity:      severity,
+				Message:       fmt.Sprintf("BANK SECURITY ALARM: %s payload detected on %s from IP %s. Status: %s. Detail: %s", logItem.AttackType, logItem.Endpoint, logItem.ClientIP, logItem.Status, logItem.Description),
+				SourceIP:      logItem.ClientIP,
+				ThreatFlagged: true,
+				ThreatType:    logItem.AttackType,
 			})
 
 			hasNewAlerts = true
@@ -977,5 +1074,10 @@ func (db *Database) syncBankSecurityLogs() {
 			db.Logs = db.Logs[len(db.Logs)-500:]
 		}
 		db.updateAgentThreatsAndNetwork()
+	}
+	db.Mu.Unlock()
+
+	for _, alert := range alertsForHook {
+		NotifySecurityAlert(alert)
 	}
 }

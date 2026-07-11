@@ -54,6 +54,12 @@ export interface LogEntry {
   message: string;
   sourceIp?: string;
   statusCode?: number;
+  geoIp?: string;
+  asn?: string;
+  assetCritical?: string;
+  threatFlagged?: boolean;
+  threatType?: string;
+  decodedPayload?: string;
 }
 
 export interface AIAnalysis {
@@ -89,4 +95,3 @@ export interface ActionLog {
   status: 'success' | 'failed' | 'pending';
   message: string;
 }
-

@@ -32,9 +32,10 @@ type SecurityEvent struct {
 // "aegis.security.events" Kafka topic and converts each message
 // into an Alert + LogEntry in the SOC Dashboard's in-memory store.
 func StartKafkaConsumer(ctx context.Context) {
-	brokers := os.Getenv("KAFKA_BOOTSTRAP_SERVERS")
+	brokers := strings.TrimSpace(os.Getenv("KAFKA_BOOTSTRAP_SERVERS"))
 	if brokers == "" {
-		brokers = "localhost:9094"
+		log.Println("[Kafka Consumer] KAFKA_BOOTSTRAP_SERVERS is not set; realtime security-event ingestion is disabled.")
+		return
 	}
 
 	topic := "aegis.security.events"
@@ -109,16 +110,11 @@ func StartKafkaConsumer(ctx context.Context) {
 func ingestSecurityEvent(event *SecurityEvent) {
 	db := store.DB
 	db.Mu.Lock()
-	defer db.Mu.Unlock()
 
 	// Map attack type to MITRE ATT&CK
 	mitreTech := "T1190"
 	mitreTactics := []string{"Initial Access"}
-	severity := "high"
-
-	if strings.ToUpper(event.Status) == "ALLOWED" {
-		severity = "critical"
-	}
+	severity := store.SecurityAlertSeverity(event.AttackType, event.Status, event.Payload, event.Description)
 
 	switch strings.ToUpper(event.AttackType) {
 	case "SQL_INJECTION":
@@ -153,7 +149,21 @@ func ingestSecurityEvent(event *SecurityEvent) {
 		ruleSub = ruleSub[:8]
 	}
 
-	db.AddAlert(&models.Alert{
+	rawLogBytes, _ := json.Marshal(map[string]string{
+		"eventId":     event.EventID,
+		"timestamp":   event.Timestamp,
+		"attack_type": event.AttackType,
+		"attackType":  event.AttackType,
+		"endpoint":    event.Endpoint,
+		"payload":     event.Payload,
+		"status":      event.Status,
+		"client_ip":   event.ClientIP,
+		"clientIp":    event.ClientIP,
+		"description": event.Description,
+		"source":      event.SourceService,
+	})
+
+	alert := &models.Alert{
 		ID:             alertID,
 		RuleID:         fmt.Sprintf("rule-kafka-%s", ruleSub),
 		Severity:       severity,
@@ -165,25 +175,31 @@ func ingestSecurityEvent(event *SecurityEvent) {
 		MITRETactics:   mitreTactics,
 		Category:       "web",
 		Timestamp:      time.Now(),
-		RawLog:         fmt.Sprintf(`{"eventId":"%s","timestamp":"%s","attack_type":"%s","endpoint":"%s","payload":"%s","status":"%s","client_ip":"%s","description":"%s","source":"%s"}`, event.EventID, event.Timestamp, event.AttackType, event.Endpoint, event.Payload, event.Status, event.ClientIP, event.Description, event.SourceService),
+		RawLog:         string(rawLogBytes),
 		Status:         "open",
-	})
+	}
+	db.AddAlert(alert)
 
 	// Create Log Entry
 	db.LogCounter++
 	db.AddLog(&models.LogEntry{
-		ID:        fmt.Sprintf("log-%05d", db.LogCounter),
-		Timestamp: time.Now(),
-		AgentID:   "agent-01",
-		AgentName: "Web-Prod-01",
-		Facility:  "web",
-		Severity:  severity,
-		Message:   fmt.Sprintf("[KAFKA] BANK SECURITY ALARM: %s payload detected on %s from IP %s. Status: %s. Detail: %s", event.AttackType, event.Endpoint, event.ClientIP, event.Status, event.Description),
-		SourceIP:  event.ClientIP,
+		ID:            fmt.Sprintf("log-%05d", db.LogCounter),
+		Timestamp:     time.Now(),
+		AgentID:       "agent-01",
+		AgentName:     "Web-Prod-01",
+		Facility:      "web",
+		Severity:      severity,
+		Message:       fmt.Sprintf("[KAFKA] BANK SECURITY ALARM: %s payload detected on %s from IP %s. Status: %s. Detail: %s", event.AttackType, event.Endpoint, event.ClientIP, event.Status, event.Description),
+		SourceIP:      event.ClientIP,
+		ThreatFlagged: true,
+		ThreatType:    event.AttackType,
 	})
 
 	// Trim old data
 	if len(db.Logs) > 500 {
 		db.Logs = db.Logs[len(db.Logs)-500:]
 	}
+	db.Mu.Unlock()
+
+	store.NotifySecurityAlert(alert)
 }

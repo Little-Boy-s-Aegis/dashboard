@@ -1,10 +1,12 @@
 # Build Go backend
-FROM golang:alpine AS builder
+FROM --platform=$BUILDPLATFORM golang:alpine AS builder
 WORKDIR /app
-COPY backend/go.mod ./
+ARG TARGETOS
+ARG TARGETARCH
+COPY backend/go.mod backend/go.sum ./
 RUN go mod download
 COPY backend/ ./
-RUN CGO_ENABLED=0 GOOS=linux go build -o main .
+RUN CGO_ENABLED=0 GOOS=$TARGETOS GOARCH=$TARGETARCH go build -o main .
 
 # Run stage
 FROM alpine:latest

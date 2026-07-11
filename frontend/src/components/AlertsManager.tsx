@@ -50,19 +50,18 @@ export default function AlertsManager({ alerts, onRefresh, initialMitreFilter, o
     fetchBannedIps();
   }, []);
 
-  const handleBanIp = async (ip: string, e: React.MouseEvent) => {
+  const handleBanIp = async (alert: Alert, e: React.MouseEvent) => {
     e.stopPropagation();
+    const ip = getAttackerIp(alert.rawLog);
+    if (ip === 'N/A') return;
     if (banningIp) return;
     setBanningIp(ip);
     try {
-      const res = await fetch('/api/actions', {
+      const res = await fetch(`/api/alerts/${alert.id}/orchestrated-ban`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          actor: 'SOC (admin)',
-          actionType: 'Block IP',
-          target: ip,
-          message: 'Quick ban from Alerts & Incidents table'
+          target: ip
         })
       });
       if (res.ok) {
@@ -303,7 +302,7 @@ export default function AlertsManager({ alerts, onRefresh, initialMitreFilter, o
                             </button>
                           ) : (
                             <button
-                              onClick={e => handleBanIp(ip, e)}
+                              onClick={e => handleBanIp(a, e)}
                               disabled={banningIp === ip}
                               style={{
                                 background: 'rgba(239, 68, 68, 0.15)',
@@ -397,7 +396,7 @@ export default function AlertsManager({ alerts, onRefresh, initialMitreFilter, o
               ) : (
                 <button
                   className="btn"
-                  onClick={e => handleBanIp(ip, e)}
+                  onClick={e => handleBanIp(selected, e)}
                   disabled={banningIp === ip}
                   style={{
                     background: 'rgba(239, 68, 68, 0.15)',
