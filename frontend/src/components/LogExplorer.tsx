@@ -65,6 +65,7 @@ export default function LogExplorer({ onRefresh }: Props) {
           <option value="web">web/http</option>
           <option value="daemon">daemon</option>
           <option value="syslog">syslog</option>
+          <option value="soc_audit">SOC Audit</option>
         </select>
       </div>
 

@@ -1003,6 +1003,8 @@ func PerformAction(w http.ResponseWriter, r *http.Request) {
 	store.DB.ActionLogs = append(store.DB.ActionLogs, actionLog)
 	store.DB.Mu.Unlock()
 
+	LogSOCToSyslog(resolvedActor, req.ActionType, req.Target, detailMsg)
+
 	writeJSON(w, http.StatusOK, actionLog)
 }
 
@@ -1235,6 +1237,8 @@ func appendSoarActionLog(actionType string, target string, status string, messag
 			log.Printf("[DATABASE ERROR] Failed to save SOAR action log to PostgreSQL: %v", dbErr)
 		}
 	}
+
+	LogSOCToSyslog(actionLog.Actor, actionLog.ActionType, actionLog.Target, actionLog.Message)
 
 	return actionLog
 }
@@ -1798,5 +1802,38 @@ func LogSOCAction(actor string, actionType string, target string, status string,
 
 	store.DB.Mu.Lock()
 	store.DB.ActionLogs = append(store.DB.ActionLogs, actionLog)
+	store.DB.Mu.Unlock()
+
+	LogSOCToSyslog(actor, actionType, target, message)
+}
+
+// LogSOCToSyslog saves a SOC action log into the general log_entries table
+func LogSOCToSyslog(actor string, actionType string, target string, message string) {
+	logID := fmt.Sprintf("log-soc-%d-%s", time.Now().UnixNano(), generateSessionToken()[:8])
+	
+	logEntry := &models.LogEntry{
+		ID:             logID,
+		Timestamp:      time.Now(),
+		AgentID:        "soc-console",
+		AgentName:      "SOC-Console",
+		Facility:       "soc_audit",
+		Severity:       "info",
+		Message:        fmt.Sprintf("[%s] %s on %s: %s", actor, actionType, target, message),
+		SourceIP:       "127.0.0.1",
+		StatusCode:     0,
+		GeoIP:          "N/A",
+		ASN:            "N/A",
+		AssetCritical:  "low",
+		ThreatFlagged:  false,
+	}
+
+	if store.UsePostgres {
+		if err := store.SaveSQLLogEntry(logEntry); err != nil {
+			log.Printf("[DATABASE ERROR] Failed to save SOC syslog entry to PostgreSQL: %v", err)
+		}
+	}
+
+	store.DB.Mu.Lock()
+	store.DB.Logs = append(store.DB.Logs, logEntry)
 	store.DB.Mu.Unlock()
 }
