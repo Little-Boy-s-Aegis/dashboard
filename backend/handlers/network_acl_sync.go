@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log"
 	"net/netip"
 	"os"
 	"strconv"
@@ -77,6 +78,12 @@ func describeNetworkACLEntries(ctx context.Context, client *ec2.Client, networkA
 }
 
 func createNetworkACLEntries(ctx context.Context, client *ec2.Client, networkACLID string, entries []ec2types.NetworkAclEntry, cidr string) error {
+	var err error
+	entries, err = pruneNetworkACLEntries(ctx, client, networkACLID, entries, 15)
+	if err != nil {
+		return err
+	}
+
 	ruleNumber, err := networkACLRuleNumber(entries, cidr)
 	if err != nil {
 		return err
@@ -214,4 +221,68 @@ func parseInt32Env(name string, fallback int32) int32 {
 		return fallback
 	}
 	return int32(value)
+}
+
+func pruneNetworkACLEntries(ctx context.Context, client *ec2.Client, networkACLID string, entries []ec2types.NetworkAclEntry, maxRuntimeEntries int) ([]ec2types.NetworkAclEntry, error) {
+	var runtimeIngress []ec2types.NetworkAclEntry
+	for _, entry := range entries {
+		if entry.Egress == nil || aws.ToBool(entry.Egress) {
+			continue
+		}
+		if entry.RuleNumber == nil {
+			continue
+		}
+		start, limit := networkACLRuntimeRange()
+		rn := aws.ToInt32(entry.RuleNumber)
+		if rn >= start && rn < start+limit {
+			runtimeIngress = append(runtimeIngress, entry)
+		}
+	}
+
+	if len(runtimeIngress) < maxRuntimeEntries {
+		return entries, nil
+	}
+
+	for len(runtimeIngress) >= maxRuntimeEntries {
+		var oldestEntry ec2types.NetworkAclEntry
+		minRN := int32(999999)
+		for _, entry := range runtimeIngress {
+			rn := aws.ToInt32(entry.RuleNumber)
+			if rn < minRN {
+				minRN = rn
+				oldestEntry = entry
+			}
+		}
+
+		if oldestEntry.CidrBlock == nil {
+			break
+		}
+
+		cidrToDelete := aws.ToString(oldestEntry.CidrBlock)
+		log.Printf("[NETWORK ACL SYNC] Pruning oldest Network ACL IP block to stay within limit: %s", cidrToDelete)
+
+		if err := deleteNetworkACLEntries(ctx, client, networkACLID, entries, cidrToDelete); err != nil {
+			log.Printf("[NETWORK ACL SYNC] Failed to prune Network ACL entries for %s: %v", cidrToDelete, err)
+		}
+
+		var newEntries []ec2types.NetworkAclEntry
+		for _, entry := range entries {
+			if entry.CidrBlock != nil && aws.ToString(entry.CidrBlock) == cidrToDelete {
+				continue
+			}
+			newEntries = append(newEntries, entry)
+		}
+		entries = newEntries
+
+		var newRuntimeIngress []ec2types.NetworkAclEntry
+		for _, entry := range runtimeIngress {
+			if entry.CidrBlock != nil && aws.ToString(entry.CidrBlock) == cidrToDelete {
+				continue
+			}
+			newRuntimeIngress = append(newRuntimeIngress, entry)
+		}
+		runtimeIngress = newRuntimeIngress
+	}
+
+	return entries, nil
 }
