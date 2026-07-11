@@ -90,13 +90,16 @@ export default function OrchestratorChat({ agents }: Props) {
 
       // 1. Build customized baseline conversation logs using correct Agent IP and OS
       const baselineMessages: ChatMessage[] = [];
+      const threeDaysAgo = new Date(Date.now() - 3 * 24 * 3600 * 1000);
+      const twoDaysAgo = new Date(Date.now() - 2 * 24 * 3600 * 1000);
+
       if (nameLower.includes('web')) {
         baselineMessages.push(
           {
             id: `${agent.id}-base-1`,
             sender: 'agent',
             senderName: agent.name,
-            timestamp: "08:15:32 PM",
+            timestamp: new Date(threeDaysAgo.getTime() + 15 * 60000).toISOString(),
             message: 'SECURITY ALERT: Nginx detected high frequency of SQL injection payloads hitting API endpoint /v1/auth/login.',
             details: JSON.stringify({
               log_source: "nginx-access-logger",
@@ -118,7 +121,7 @@ export default function OrchestratorChat({ agents }: Props) {
             id: `${agent.id}-base-2`,
             sender: 'orchestrator',
             senderName: 'L2 SOAR Orchestrator (AI Triage)',
-            timestamp: "08:16:32 PM",
+            timestamp: new Date(threeDaysAgo.getTime() + 16 * 60000).toISOString(),
             message: `AI Assessment: Threat verified. Attacker IP is conducting active exploitation scanner against ${agent.name}. Autopilot rule triggered: Containment Active.`,
             details: JSON.stringify({
               ai_triage: {
@@ -149,7 +152,7 @@ export default function OrchestratorChat({ agents }: Props) {
             id: `${agent.id}-base-1`,
             sender: 'agent',
             senderName: agent.name,
-            timestamp: "08:17:41 PM",
+            timestamp: new Date(twoDaysAgo.getTime() + 17 * 60000).toISOString(),
             message: 'INTEGRITY REPORT: Syscheck detected unauthorized file modification in system configuration directories.',
             details: JSON.stringify({
               audit_type: "file_integrity_monitoring",
@@ -168,7 +171,7 @@ export default function OrchestratorChat({ agents }: Props) {
             id: `${agent.id}-base-2`,
             sender: 'orchestrator',
             senderName: 'L2 SOAR Orchestrator (AI Triage)',
-            timestamp: "08:18:41 PM",
+            timestamp: new Date(twoDaysAgo.getTime() + 18 * 60000).toISOString(),
             message: `AI Assessment: Severity High. Modification to database host files allows broad network access to secure database on ${agent.name}. Autopilot rule triggered: Revert Configuration and Isolate Host.`,
             details: JSON.stringify({
               ai_triage: {
@@ -194,7 +197,7 @@ export default function OrchestratorChat({ agents }: Props) {
             id: `${agent.id}-base-3`,
             sender: 'agent',
             senderName: agent.name,
-            timestamp: "08:19:41 PM",
+            timestamp: new Date(twoDaysAgo.getTime() + 19 * 60000).toISOString(),
             message: 'INTEGRITY SYNC: Reverted /etc/postgresql/15/main/pg_hba.conf to default config from configuration master. Postgres restarted successfully.',
             details: JSON.stringify({
               reversion_status: "Successful",
@@ -208,7 +211,7 @@ export default function OrchestratorChat({ agents }: Props) {
             id: `${agent.id}-base-1`,
             sender: 'agent',
             senderName: agent.name,
-            timestamp: "08:20:15 PM",
+            timestamp: new Date(twoDaysAgo.getTime() + 20 * 60000).toISOString(),
             message: 'SECURITY ALERT: Multiple SSH login failures detected on root account from external address 104.28.163.100.',
             details: JSON.stringify({
               log_source: "pam_secure_logger",
@@ -222,7 +225,7 @@ export default function OrchestratorChat({ agents }: Props) {
             id: `${agent.id}-base-2`,
             sender: 'orchestrator',
             senderName: 'L2 SOAR Orchestrator (AI Triage)',
-            timestamp: "08:21:15 PM",
+            timestamp: new Date(twoDaysAgo.getTime() + 21 * 60000).toISOString(),
             message: `AI Assessment: Severity Medium. Active brute-force attack targeting gateway ssh services on ${agent.name}. Autopilot containment initiated: Add IP to SOAR Blocklist.`,
             details: JSON.stringify({
               ai_triage: {
@@ -240,16 +243,28 @@ export default function OrchestratorChat({ agents }: Props) {
         );
       }
 
-      // 2. Fetch and format live alerts from PostgreSQL matching this specific agent
-      const matchedAlerts = realAlerts.filter(a => 
-        a.agentId === agent.id || 
-        a.agentName === agent.name ||
-        (a.agentName && a.agentName.toLowerCase() === agent.name.toLowerCase())
-      );
+      // 2. Fetch and format live alerts from PostgreSQL matching this specific agent (forgiving regex-like search)
+      const agentNameLower = agent.name.toLowerCase();
+      const matchedAlerts = realAlerts.filter(a => {
+        const aAgentName = a.agentName ? a.agentName.toLowerCase() : '';
+        const aAgentId = a.agentId ? a.agentId.toLowerCase() : '';
+        const aDescription = a.description ? a.description.toLowerCase() : '';
+        const aRawLog = a.rawLog ? a.rawLog.toLowerCase() : '';
+
+        return (
+          aAgentId === agent.id.toLowerCase() ||
+          aAgentName === agentNameLower ||
+          (aAgentName && aAgentName.includes(agentNameLower)) ||
+          (aAgentName && agentNameLower.includes(aAgentName)) ||
+          aDescription.includes(agentNameLower) ||
+          aRawLog.includes(agentNameLower) ||
+          (agent.ip && aRawLog.includes(agent.ip.toLowerCase()))
+        );
+      });
 
       const realMsgList: ChatMessage[] = [];
       matchedAlerts.forEach((alert) => {
-        const alertTime = new Date(alert.timestamp).toLocaleTimeString();
+        const alertTime = new Date(alert.timestamp).toISOString();
         const alertMsgId = `real-alert-${alert.id}`;
 
         realMsgList.push({
@@ -268,19 +283,25 @@ export default function OrchestratorChat({ agents }: Props) {
           }, null, 2)
         });
 
-        // 3. Find matching live SOAR response action executed by the orchestrator
-        const matchedAction = realActions.find(act => 
-          act.target === alert.agentId || 
-          act.target === agent.ip || 
-          (alert.rawLog && alert.rawLog.includes(act.target))
-        );
+        // 3. Find matching live SOAR response action executed by the orchestrator (forgiving search)
+        const matchedAction = realActions.find(act => {
+          const actTarget = act.target ? act.target.toLowerCase() : '';
+          const aRawLog = alert.rawLog ? alert.rawLog.toLowerCase() : '';
+          return (
+            act.target === alert.agentId || 
+            act.target === agent.ip || 
+            actTarget.includes(agentNameLower) ||
+            agentNameLower.includes(actTarget) ||
+            aRawLog.includes(actTarget)
+          );
+        });
 
         if (matchedAction) {
           realMsgList.push({
             id: `real-action-${matchedAction.id}`,
             sender: 'orchestrator',
             senderName: 'L2 SOAR Orchestrator (AI Triage)',
-            timestamp: new Date(matchedAction.timestamp).toLocaleTimeString(),
+            timestamp: new Date(matchedAction.timestamp).toISOString(),
             message: `AI Assessment: Threat detected on ${agent.name}. Severity ${alert.severity.toUpperCase()}. Autopilot rule triggered: ${matchedAction.actionType}.`,
             details: JSON.stringify({
               ai_triage: {
@@ -322,13 +343,22 @@ export default function OrchestratorChat({ agents }: Props) {
         }
       });
 
+      // Combine all messages and sort them chronologically by timestamp
+      const allMessages = [...baselineMessages, ...realMsgList, ...(customMessages[agent.id] || [])];
+      allMessages.sort((a, b) => {
+        const timeA = new Date(a.timestamp).getTime();
+        const timeB = new Date(b.timestamp).getTime();
+        if (isNaN(timeA) || isNaN(timeB)) return 0;
+        return timeA - timeB;
+      });
+
       record[agent.id] = {
         agentId: agent.id,
         agentName: agent.name,
         agentIp: agent.ip,
         agentOs: agent.os,
         agentIcon: icon,
-        messages: [...baselineMessages, ...realMsgList, ...(customMessages[agent.id] || [])]
+        messages: allMessages
       };
     });
 
@@ -360,7 +390,7 @@ export default function OrchestratorChat({ agents }: Props) {
       id: `usr-m-${Date.now()}`,
       sender: 'agent',
       senderName: 'SOC Analyst Console',
-      timestamp: new Date().toLocaleTimeString(),
+      timestamp: new Date().toISOString(),
       message: userMessageText
     };
 
@@ -413,7 +443,7 @@ export default function OrchestratorChat({ agents }: Props) {
         id: `orc-m-${Date.now()}`,
         sender: 'orchestrator',
         senderName: 'L2 SOAR Orchestrator (AI Triage)',
-        timestamp: new Date().toLocaleTimeString(),
+        timestamp: new Date().toISOString(),
         message: responseMsgText,
         details: responseDetails || undefined,
         actionExecuted: mockAction
@@ -431,7 +461,16 @@ export default function OrchestratorChat({ agents }: Props) {
   const activeConv = conversations[activeTab];
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: 14, minWidth: 0, height: 'calc(100vh - 120px)', animation: 'fadeInUp 0.25s ease-out' }}>
+    <div style={{ 
+      display: 'flex', 
+      flexDirection: 'column', 
+      gap: 14, 
+      minWidth: 0, 
+      height: 'calc(100vh - 120px)', 
+      maxHeight: 'calc(100vh - 120px)', 
+      overflow: 'hidden', 
+      animation: 'fadeInUp 0.25s ease-out' 
+    }}>
       
       {/* Header section */}
       <div>
@@ -448,10 +487,10 @@ export default function OrchestratorChat({ agents }: Props) {
       <div style={{ height: 1, background: 'var(--border-1)', width: '100%' }} />
 
       {/* Main Split Layout */}
-      <div style={{ display: 'grid', gridTemplateColumns: '300px 1fr', gap: 16, flex: 1, minHeight: 0 }}>
+      <div style={{ display: 'grid', gridTemplateColumns: '300px 1fr', gap: 16, flex: 1, minHeight: 0, height: '100%', overflow: 'hidden' }}>
         
         {/* Left Side: 3 Agent nodes list */}
-        <div className="glass-panel" style={{ display: 'flex', flexDirection: 'column', padding: 12, gap: 10, overflowY: 'auto' }}>
+        <div className="glass-panel" style={{ display: 'flex', flexDirection: 'column', padding: 12, gap: 10, overflowY: 'auto', minHeight: 0, height: '100%' }}>
           <h3 style={{ fontSize: '0.74rem', color: 'var(--text-3)', fontWeight: 600, letterSpacing: '0.04em', textTransform: 'uppercase', marginBottom: 4 }}>
             Monitored Telemetry Nodes
           </h3>
@@ -542,8 +581,7 @@ export default function OrchestratorChat({ agents }: Props) {
           </div>
         </div>
 
-        {/* Right Side: Chat Timeline Feed */}
-        <div className="glass-panel" style={{ display: 'flex', flexDirection: 'column', minHeight: 0 }}>
+        <div className="glass-panel" style={{ display: 'flex', flexDirection: 'column', minHeight: 0, height: '100%', overflow: 'hidden' }}>
           
           {/* Chat Header */}
           {activeConv && (
@@ -576,10 +614,10 @@ export default function OrchestratorChat({ agents }: Props) {
           )}
 
           {/* Split Content Pane */}
-          <div style={{ display: 'flex', flex: 1, minHeight: 0 }}>
+          <div style={{ display: 'flex', flex: 1, minHeight: 0, overflow: 'hidden', height: '100%' }}>
             
             {/* Left Column: Timeline feed & Input */}
-            <div style={{ display: 'flex', flexDirection: 'column', flex: 1, borderRight: inspectJsonMode ? '1px solid var(--border-1)' : undefined, minWidth: 0 }}>
+            <div style={{ display: 'flex', flexDirection: 'column', flex: 1, borderRight: inspectJsonMode ? '1px solid var(--border-1)' : undefined, minWidth: 0, height: '100%', minHeight: 0, overflow: 'hidden' }}>
               
               {/* Messages Feed Area */}
               <div style={{ flex: 1, overflowY: 'auto', padding: 16, display: 'flex', flexDirection: 'column', gap: 14 }}>
@@ -601,7 +639,20 @@ export default function OrchestratorChat({ agents }: Props) {
                       <div style={{ display: 'flex', gap: 6, fontSize: '0.65rem', color: 'var(--text-3)', marginBottom: 3, padding: '0 4px' }}>
                         <strong>{m.senderName}</strong>
                         <span>·</span>
-                        <span>{m.timestamp}</span>
+                        <span>
+                          {(() => {
+                            const d = new Date(m.timestamp);
+                            if (isNaN(d.getTime())) return m.timestamp;
+                            return d.toLocaleString('en-US', {
+                              month: 'short',
+                              day: 'numeric',
+                              hour: '2-digit',
+                              minute: '2-digit',
+                              second: '2-digit',
+                              hour12: false
+                            });
+                          })()}
+                        </span>
                       </div>
 
                       {/* Message Bubble */}
@@ -771,7 +822,9 @@ export default function OrchestratorChat({ agents }: Props) {
                   padding: 14, 
                   fontFamily: "'IBM Plex Mono', monospace", 
                   borderBottomRightRadius: 'var(--r-md)',
-                  gap: 16
+                  gap: 16,
+                  height: '100%',
+                  minHeight: 0
                 }}
               >
                 <div style={{ display: 'flex', alignItems: 'center', gap: 6, paddingBottom: 8, borderBottom: '1px solid rgba(255,255,255,0.08)' }}>
@@ -807,7 +860,20 @@ export default function OrchestratorChat({ agents }: Props) {
                           <span style={{ fontWeight: 600, color: isOrchestrator ? '#f59e0b' : '#38bdf8' }}>
                             {isOrchestrator ? '◀ ORCHESTRATOR RESPONSE' : '▶ AGENT INBOUND PUSH'}
                           </span>
-                          <span style={{ color: 'var(--text-3)', fontSize: '0.58rem' }}>{m.timestamp}</span>
+                          <span style={{ color: 'var(--text-3)', fontSize: '0.58rem' }}>
+                            {(() => {
+                              const d = new Date(m.timestamp);
+                              if (isNaN(d.getTime())) return m.timestamp;
+                              return d.toLocaleString('en-US', {
+                                month: 'short',
+                                day: 'numeric',
+                                hour: '2-digit',
+                                minute: '2-digit',
+                                second: '2-digit',
+                                hour12: false
+                              });
+                            })()}
+                          </span>
                         </div>
 
                         <div style={{ color: 'var(--text-2)', fontSize: '0.62rem', background: 'rgba(0,0,0,0.3)', padding: '2px 6px', borderRadius: 2 }}>

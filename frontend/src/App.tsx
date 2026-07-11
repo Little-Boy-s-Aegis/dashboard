@@ -299,7 +299,14 @@ export default function App() {
         </div>
       </aside>
 
-      <main className="main-content" style={{ display: 'flex', flexDirection: 'column', padding: '20px 24px' }}>
+      <main className="main-content" style={{ 
+        display: 'flex', 
+        flexDirection: 'column', 
+        padding: '20px 24px',
+        height: activeTab === 'orchestrator-chat' ? '100vh' : undefined,
+        maxHeight: activeTab === 'orchestrator-chat' ? '100vh' : undefined,
+        overflow: activeTab === 'orchestrator-chat' ? 'hidden' : undefined
+      }}>
         <div style={{
           display: 'flex', justifyContent: 'space-between', alignItems: 'center',
           borderBottom: '1px solid var(--border-1)', paddingBottom: 8, marginBottom: 16
