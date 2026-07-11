@@ -122,7 +122,7 @@ export default function DashboardLogWorkbench({ alerts, agents, actions }: Props
   const fetchSyslog = async () => {
     setLogsLoading(true);
     try {
-      const response = await fetch('/api/logs');
+      const response = await fetch('/api/logs?limit=250');
       if (response.ok) {
         const payload = await response.json();
         setLogs(Array.isArray(payload.logs) ? payload.logs : []);

@@ -367,7 +367,7 @@ func pruneOperationalData() {
 		log.Printf("[DATABASE WARNING] Failed to cap action_logs retention: %v", err)
 	}
 
-	logLimit := retentionLimitFromEnv("AEGIS_SECURITY_LOG_RETAIN_MAX", 2000)
+	logLimit := retentionLimitFromEnv("AEGIS_SECURITY_LOG_RETAIN_MAX", 5000)
 	if _, err := SQL.Exec(`
 		WITH ranked AS (
 			SELECT id, ROW_NUMBER() OVER (ORDER BY timestamp DESC, id DESC) AS rn
@@ -638,7 +638,7 @@ func LoadSQLLogEntries() ([]*models.LogEntry, error) {
 			WHERE COALESCE(threat_flagged, FALSE) = TRUE
 			   OR lower(severity) IN ('critical', 'high', 'medium', 'alert', 'error')
 			ORDER BY timestamp DESC, id DESC
-			LIMIT 500
+			LIMIT 3000
 		) recent
 		ORDER BY timestamp ASC, id ASC
 	`)

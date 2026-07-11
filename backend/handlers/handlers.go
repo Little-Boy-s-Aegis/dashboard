@@ -8,6 +8,7 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"strconv"
 	"strings"
 	"time"
 
@@ -599,8 +600,14 @@ func GetLogs(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// Pagination (limit to latest 100 logs in the list)
+	// Pagination (limit to latest logs in the list, default 100)
 	listLimit := 100
+	limitParam := r.URL.Query().Get("limit")
+	if limitParam != "" {
+		if parsedLimit, err := strconv.Atoi(limitParam); err == nil && parsedLimit > 0 {
+			listLimit = parsedLimit
+		}
+	}
 	if len(filteredLogs) > listLimit {
 		filteredLogs = filteredLogs[:listLimit]
 	}

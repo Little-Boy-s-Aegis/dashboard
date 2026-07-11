@@ -659,9 +659,9 @@ func (db *Database) startSimulator() {
 					StatusCode: code,
 				})
 			}
-			// Cap logs at 500
-			if len(db.Logs) > 500 {
-				db.Logs = db.Logs[len(db.Logs)-500:]
+			// Cap logs at 3000
+			if len(db.Logs) > 3000 {
+				db.Logs = db.Logs[len(db.Logs)-3000:]
 			}
 			db.Mu.Unlock()
 
@@ -1178,8 +1178,8 @@ func (db *Database) syncBankSecurityLogs() {
 
 	if hasNewAlerts {
 		log.Printf("[SYNC] Successfully ingested new bank security logs/alerts into PostgreSQL.")
-		if len(db.Logs) > 500 {
-			db.Logs = db.Logs[len(db.Logs)-500:]
+		if len(db.Logs) > 3000 {
+			db.Logs = db.Logs[len(db.Logs)-3000:]
 		}
 		db.updateAgentThreatsAndNetwork()
 	}

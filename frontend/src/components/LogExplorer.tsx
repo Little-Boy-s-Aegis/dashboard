@@ -25,7 +25,7 @@ export default function LogExplorer({ onRefresh }: Props) {
     if (dq) p.append('q', dq);
     if (facility) p.append('facility', facility);
     if (actor) p.append('actor', actor);
-    fetch(`/api/logs?${p.toString()}`).then(r => r.json()).then(d => {
+    fetch(`/api/logs?limit=250&${p.toString()}`).then(r => r.json()).then(d => {
       setLogs(d.logs || []); setHist(d.histogram || []); setLoading(false); onRefresh();
     }).catch(() => setLoading(false));
   };
