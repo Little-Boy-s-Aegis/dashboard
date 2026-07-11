@@ -419,18 +419,19 @@ export default function OrchestratorChat({ agents }: Props) {
       const chatEl = chatScrollContainerRef.current;
       const jsonEl = jsonStreamRef.current;
 
+      const chatRect = chatEl.getBoundingClientRect();
       const chatChildren = Array.from(chatEl.children);
-      const scrollTop = chatEl.scrollTop;
       let activeId = null;
       let offsetDiff = 0;
 
       for (let i = 0; i < chatChildren.length; i++) {
         const child = chatChildren[i] as HTMLElement;
         if (child.id && child.id.startsWith('msg-left-')) {
-          const childTop = child.offsetTop;
-          if (childTop + child.clientHeight >= scrollTop) {
+          const childRect = child.getBoundingClientRect();
+          // The first child whose bottom is past the viewport top is the active visible child
+          if (childRect.bottom >= chatRect.top) {
             activeId = child.id.replace('msg-left-', '');
-            offsetDiff = scrollTop - childTop;
+            offsetDiff = chatRect.top - childRect.top; // always >= 0
             break;
           }
         }
@@ -439,7 +440,10 @@ export default function OrchestratorChat({ agents }: Props) {
       if (activeId) {
         const rightEl = document.getElementById(`msg-right-${activeId}`);
         if (rightEl) {
-          jsonEl.scrollTop = rightEl.offsetTop + offsetDiff;
+          const rightRect = rightEl.getBoundingClientRect();
+          const jsonRect = jsonEl.getBoundingClientRect();
+          const currentAlignDiff = rightRect.top - jsonRect.top;
+          jsonEl.scrollTop = jsonEl.scrollTop + currentAlignDiff + offsetDiff;
         }
       }
 
@@ -456,18 +460,18 @@ export default function OrchestratorChat({ agents }: Props) {
       const chatEl = chatScrollContainerRef.current;
       const jsonEl = jsonStreamRef.current;
 
+      const jsonRect = jsonEl.getBoundingClientRect();
       const jsonChildren = Array.from(jsonEl.children);
-      const scrollTop = jsonEl.scrollTop;
       let activeId = null;
       let offsetDiff = 0;
 
       for (let i = 0; i < jsonChildren.length; i++) {
         const child = jsonChildren[i] as HTMLElement;
         if (child.id && child.id.startsWith('msg-right-')) {
-          const childTop = child.offsetTop;
-          if (childTop + child.clientHeight >= scrollTop) {
+          const childRect = child.getBoundingClientRect();
+          if (childRect.bottom >= jsonRect.top) {
             activeId = child.id.replace('msg-right-', '');
-            offsetDiff = scrollTop - childTop;
+            offsetDiff = jsonRect.top - childRect.top;
             break;
           }
         }
@@ -476,7 +480,10 @@ export default function OrchestratorChat({ agents }: Props) {
       if (activeId) {
         const leftEl = document.getElementById(`msg-left-${activeId}`);
         if (leftEl) {
-          chatEl.scrollTop = leftEl.offsetTop + offsetDiff;
+          const leftRect = leftEl.getBoundingClientRect();
+          const chatRect = chatEl.getBoundingClientRect();
+          const currentAlignDiff = leftRect.top - chatRect.top;
+          chatEl.scrollTop = chatEl.scrollTop + currentAlignDiff + offsetDiff;
         }
       }
 
