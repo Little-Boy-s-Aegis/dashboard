@@ -637,6 +637,7 @@ func LoadSQLLogEntries() ([]*models.LogEntry, error) {
 			FROM log_entries
 			WHERE COALESCE(threat_flagged, FALSE) = TRUE
 			   OR lower(severity) IN ('critical', 'high', 'medium', 'alert', 'error')
+			   OR facility = 'soc_audit'
 			ORDER BY timestamp DESC, id DESC
 			LIMIT 3000
 		) recent

@@ -98,7 +98,7 @@ func ShouldPersistSecurityLog(entry *models.LogEntry) bool {
 	if entry == nil {
 		return false
 	}
-	if entry.ThreatFlagged {
+	if entry.ThreatFlagged || entry.Facility == "soc_audit" {
 		return true
 	}
 	switch strings.ToLower(strings.TrimSpace(entry.Severity)) {
@@ -1118,6 +1118,9 @@ func (db *Database) syncBankSecurityLogs() {
 			case "PARAMETER_TAMPERING":
 				mitreTech = "T1565.002"
 				mitreTactics = []string{"Impact"}
+			case "BRUTE_FORCE":
+				mitreTech = "T1110"
+				mitreTactics = []string{"Credential Access"}
 			}
 
 			db.AlertCounter++
