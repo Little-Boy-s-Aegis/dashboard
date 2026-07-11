@@ -7,6 +7,7 @@ import (
 	"net"
 	"net/netip"
 	"os"
+	"strconv"
 	"strings"
 	"time"
 
@@ -65,6 +66,7 @@ func InitDB() {
 	log.Printf("[DATABASE] Connected to PostgreSQL successfully! Running migrations...")
 
 	runMigrations()
+	pruneOperationalData()
 	seedOperators()
 	DB.persistSeed()
 }
@@ -303,6 +305,75 @@ func runMigrations() {
 	_, _ = SQL.Exec("DELETE FROM banned_ips WHERE status = 'unbanned'")
 
 	log.Printf("[DATABASE] Schema migrations completed successfully.")
+}
+
+func retentionLimitFromEnv(name string, fallback int) int {
+	raw := strings.TrimSpace(os.Getenv(name))
+	if raw == "" {
+		return fallback
+	}
+	value, err := strconv.Atoi(raw)
+	if err != nil || value < 1 {
+		log.Printf("[DATABASE WARNING] Invalid %s=%q; using default %d", name, raw, fallback)
+		return fallback
+	}
+	return value
+}
+
+func pruneOperationalData() {
+	if !UsePostgres {
+		return
+	}
+
+	// Keep the SOC database focused on attacks and real response actions.
+	// L2 workflow steps such as notify_soc/open_ticket/create_hunt are useful transient
+	// orchestration details, but persisting every one makes SOAR metrics and storage noisy.
+	if _, err := SQL.Exec(`
+		DELETE FROM action_logs
+		WHERE action_type NOT IN (
+			'Block IP',
+			'Unblock IP',
+			'Unblock All IPs',
+			'Isolate Host',
+			'Terminate Process',
+			'Revoke Credentials',
+			'Force Logout'
+		)
+	`); err != nil {
+		log.Printf("[DATABASE WARNING] Failed to prune non-security action logs: %v", err)
+	}
+
+	if _, err := SQL.Exec(`
+		DELETE FROM log_entries
+		WHERE COALESCE(threat_flagged, FALSE) = FALSE
+		  AND lower(severity) NOT IN ('critical', 'high', 'medium', 'alert', 'error')
+	`); err != nil {
+		log.Printf("[DATABASE WARNING] Failed to prune non-threat log entries: %v", err)
+	}
+
+	actionLimit := retentionLimitFromEnv("AEGIS_ACTION_LOG_RETAIN_MAX", 1000)
+	if _, err := SQL.Exec(`
+		WITH ranked AS (
+			SELECT id, ROW_NUMBER() OVER (ORDER BY timestamp DESC, id DESC) AS rn
+			FROM action_logs
+		)
+		DELETE FROM action_logs
+		WHERE id IN (SELECT id FROM ranked WHERE rn > $1)
+	`, actionLimit); err != nil {
+		log.Printf("[DATABASE WARNING] Failed to cap action_logs retention: %v", err)
+	}
+
+	logLimit := retentionLimitFromEnv("AEGIS_SECURITY_LOG_RETAIN_MAX", 2000)
+	if _, err := SQL.Exec(`
+		WITH ranked AS (
+			SELECT id, ROW_NUMBER() OVER (ORDER BY timestamp DESC, id DESC) AS rn
+			FROM log_entries
+		)
+		DELETE FROM log_entries
+		WHERE id IN (SELECT id FROM ranked WHERE rn > $1)
+	`, logLimit); err != nil {
+		log.Printf("[DATABASE WARNING] Failed to cap log_entries retention: %v", err)
+	}
 }
 
 func seedOperators() {
@@ -555,7 +626,18 @@ func LoadSQLFIMEvents() ([]*models.FIMEvent, error) {
 }
 
 func LoadSQLLogEntries() ([]*models.LogEntry, error) {
-	rows, err := SQL.Query("SELECT id, timestamp, agent_id, agent_name, facility, severity, message, source_ip, status_code, geo_ip, asn, asset_critical, threat_flagged, threat_type, decoded_payload, ecs_timestamp, ecs_log_level, ecs_event_dataset, ecs_event_id, ecs_source_ip, ecs_http_status, ecs_geo_country, ecs_asn_name, ecs_service_name, ecs_url_original, ecs_agent_id, ecs_agent_name, ecs_agent_type, ecs_event_category, ecs_event_kind, ecs_event_outcome FROM log_entries ORDER BY timestamp ASC LIMIT 500")
+	rows, err := SQL.Query(`
+		SELECT id, timestamp, agent_id, agent_name, facility, severity, message, source_ip, status_code, geo_ip, asn, asset_critical, threat_flagged, threat_type, decoded_payload, ecs_timestamp, ecs_log_level, ecs_event_dataset, ecs_event_id, ecs_source_ip, ecs_http_status, ecs_geo_country, ecs_asn_name, ecs_service_name, ecs_url_original, ecs_agent_id, ecs_agent_name, ecs_agent_type, ecs_event_category, ecs_event_kind, ecs_event_outcome
+		FROM (
+			SELECT id, timestamp, agent_id, agent_name, facility, severity, message, source_ip, status_code, geo_ip, asn, asset_critical, threat_flagged, threat_type, decoded_payload, ecs_timestamp, ecs_log_level, ecs_event_dataset, ecs_event_id, ecs_source_ip, ecs_http_status, ecs_geo_country, ecs_asn_name, ecs_service_name, ecs_url_original, ecs_agent_id, ecs_agent_name, ecs_agent_type, ecs_event_category, ecs_event_kind, ecs_event_outcome
+			FROM log_entries
+			WHERE COALESCE(threat_flagged, FALSE) = TRUE
+			   OR lower(severity) IN ('critical', 'high', 'medium', 'alert', 'error')
+			ORDER BY timestamp DESC, id DESC
+			LIMIT 500
+		) recent
+		ORDER BY timestamp ASC, id ASC
+	`)
 	if err != nil {
 		return nil, err
 	}
@@ -580,7 +662,25 @@ func LoadSQLLogEntries() ([]*models.LogEntry, error) {
 }
 
 func LoadSQLActionLogs() ([]*models.ActionLog, error) {
-	rows, err := SQL.Query("SELECT id, timestamp, actor, action_type, target, status, message FROM action_logs ORDER BY timestamp ASC")
+	rows, err := SQL.Query(`
+		SELECT id, timestamp, actor, action_type, target, status, message
+		FROM (
+			SELECT id, timestamp, actor, action_type, target, status, message
+			FROM action_logs
+			WHERE action_type IN (
+				'Block IP',
+				'Unblock IP',
+				'Unblock All IPs',
+				'Isolate Host',
+				'Terminate Process',
+				'Revoke Credentials',
+				'Force Logout'
+			)
+			ORDER BY timestamp DESC, id DESC
+			LIMIT 500
+		) recent
+		ORDER BY timestamp ASC, id ASC
+	`)
 	if err != nil {
 		return nil, err
 	}
@@ -645,6 +745,23 @@ func SaveSQLBannedIP(ip string, actor string, status string, reason string) erro
 	`, ip, time.Now(), actor, status, reason)
 	if err != nil {
 		log.Printf("[DATABASE ERROR] Failed to save banned IP: %v", err)
+	}
+	return err
+}
+
+func ClearSQLBannedIPs() error {
+	if DB != nil && !UsePostgres {
+		DB.Mu.Lock()
+		DB.BannedIPs = make(map[string]*models.BannedIP)
+		DB.Mu.Unlock()
+		return nil
+	}
+	if !UsePostgres {
+		return nil
+	}
+	_, err := SQL.Exec("DELETE FROM banned_ips")
+	if err != nil {
+		log.Printf("[DATABASE ERROR] Failed to delete all banned IPs: %v", err)
 	}
 	return err
 }

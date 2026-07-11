@@ -1,0 +1,5 @@
+FROM alpine:latest
+WORKDIR /app
+COPY backend/main .
+EXPOSE 8082
+ENTRYPOINT ["./main"]

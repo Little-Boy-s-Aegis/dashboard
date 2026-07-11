@@ -18,9 +18,10 @@ import (
 // StartLogProcessor listens concurrently to the L2 Clean Log topic,
 // parses the normalized events, and pushes them to the dashboard store.
 func StartLogProcessor(ctx context.Context) {
-	brokers := os.Getenv("KAFKA_BOOTSTRAP_SERVERS")
+	brokers := strings.TrimSpace(os.Getenv("KAFKA_BOOTSTRAP_SERVERS"))
 	if brokers == "" {
-		brokers = "localhost:9094"
+		log.Println("[Log Processor] KAFKA_BOOTSTRAP_SERVERS is not set; L2 clean-log ingestion is disabled.")
+		return
 	}
 	brokerList := strings.Split(brokers, ",")
 
@@ -71,7 +72,12 @@ func pushToDashboardStore(logEntry *models.LogEntry) {
 	db.Mu.Lock()
 	defer db.Mu.Unlock()
 
-	// Append log entry
+	if !store.ShouldPersistSecurityLog(logEntry) {
+		return
+	}
+
+	// Append only threat/security log entries. Clean operational logs stay in Kafka/storage,
+	// not in the SOC dashboard database.
 	db.LogCounter++
 	db.AddLog(logEntry)
 
@@ -95,7 +101,7 @@ func pushToDashboardStore(logEntry *models.LogEntry) {
 			subID = subID[len(subID)-4:]
 		}
 
-		db.Alerts = append(db.Alerts, &models.Alert{
+		db.AddAlert(&models.Alert{
 			ID:             alertID,
 			RuleID:         fmt.Sprintf("rule-siem-%s", subID),
 			Severity:       "critical",
@@ -110,10 +116,5 @@ func pushToDashboardStore(logEntry *models.LogEntry) {
 			RawLog:         logEntry.DecodedPayload,
 			Status:         "open",
 		})
-
-		// Trim alerts
-		if len(db.Alerts) > 100 {
-			db.Alerts = db.Alerts[len(db.Alerts)-100:]
-		}
 	}
 }

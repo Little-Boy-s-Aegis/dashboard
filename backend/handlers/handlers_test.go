@@ -475,6 +475,36 @@ func TestSimulationAndActions(t *testing.T) {
 		}
 	})
 
+	t.Run("Perform Action - Unblock All IPs clears all active bans", func(t *testing.T) {
+		setupTestStores()
+		store.DB.Mu.Lock()
+		store.DB.BannedIPs["198.51.100.111"] = &models.BannedIP{
+			IPAddress: "198.51.100.111",
+			Status:    "active",
+		}
+		store.DB.BannedIPs["198.51.100.222"] = &models.BannedIP{
+			IPAddress: "198.51.100.222",
+			Status:    "active",
+		}
+		store.DB.Mu.Unlock()
+
+		payload := `{"actionType":"Unblock All IPs","target":"ALL"}`
+		req := httptest.NewRequest("POST", "/api/actions", bytes.NewBufferString(payload))
+		w := httptest.NewRecorder()
+		PerformAction(w, req)
+		if w.Code != http.StatusOK {
+			t.Errorf("Expected status 200, got %d", w.Code)
+		}
+
+		store.DB.Mu.RLock()
+		bannedCount := len(store.DB.BannedIPs)
+		store.DB.Mu.RUnlock()
+
+		if bannedCount != 0 {
+			t.Errorf("Expected 0 banned IPs after Unblock All IPs, got %d", bannedCount)
+		}
+	})
+
 	t.Run("Perform Action - Block IP rejects invalid target", func(t *testing.T) {
 		payload := `{"actionType":"Block IP","target":"not-an-ip"}`
 		req := httptest.NewRequest("POST", "/api/actions", bytes.NewBufferString(payload))

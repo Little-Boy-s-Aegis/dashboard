@@ -162,7 +162,7 @@ export default function App() {
     { key: 'overview', icon: Activity, label: 'Overview' },
     { key: 'alerts', icon: AlertTriangle, label: 'Alerts', badge: totalActive },
     { key: 'actions', icon: Zap, label: 'Response Center' },
-    { key: 'soar-metrics', icon: Cpu, label: 'SOAR Performance' },
+    { key: 'soar-metrics', icon: Cpu, label: 'SOAR & Ban Registry' },
     { key: 'agents', icon: Monitor, label: 'Hosts' },
     { key: 'fim', icon: FileText, label: 'File Integrity' },
     { key: 'logs', icon: Terminal, label: 'Logs' },

@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
 import { Shield, Monitor, AlertTriangle, RefreshCw, Activity, Play, TrendingUp, Cpu } from 'lucide-react';
 import type { Agent, Alert, DashboardSummary, ActionLog } from '../types';
+import DashboardLogWorkbench from './DashboardLogWorkbench';
 
 interface Props {
   summary: DashboardSummary | null;
@@ -323,8 +324,10 @@ export default function DashboardOverview({ summary, recentAlerts, agents, actio
         </div>
       </div>
 
+      <DashboardLogWorkbench alerts={filteredAlerts} agents={agents} actions={actions} />
+
       {/* Abnormality & Orchestrator Panels */}
-      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1.2fr', gap: 12, marginBottom: 14 }}>
+      <div className="overview-split-grid" style={{ display: 'grid', gridTemplateColumns: '1fr 1.2fr', gap: 12, marginBottom: 14 }}>
         {/* Left: Abnormality Status */}
         <div className="glass-panel" style={{ padding: 14, display: 'flex', flexDirection: 'column', gap: 8 }}>
           <h3 style={{ fontSize: '0.82rem', display: 'flex', alignItems: 'center', gap: 6, color: 'var(--text-0)' }}>
@@ -438,7 +441,7 @@ export default function DashboardOverview({ summary, recentAlerts, agents, actio
         </div>
       </div>
 
-      <div style={{ display: 'grid', gridTemplateColumns: '1.7fr 1fr', gap: 12 }}>
+      <div className="overview-main-grid" style={{ display: 'grid', gridTemplateColumns: '1.7fr 1fr', gap: 12 }}>
         {/* Left Column */}
         <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
           {/* Chart */}

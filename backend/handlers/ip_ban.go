@@ -120,6 +120,11 @@ func requestHasBannedIP(r *http.Request) (bool, string, error) {
 
 func IPBanMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("X-Aegis-Surface") == "soc-console" {
+			next.ServeHTTP(w, r)
+			return
+		}
+
 		banned, ip, err := requestHasBannedIP(r)
 		if err != nil {
 			log.Printf("[IP BAN] Failed to evaluate request IP ban status: %v", err)
@@ -161,7 +166,7 @@ func revokeDashboardAuth(w http.ResponseWriter, r *http.Request) {
 		Expires:  time.Unix(0, 0),
 		MaxAge:   -1,
 		HttpOnly: true,
-		Secure:   true,
+		Secure:   secureCookieForRequest(r),
 		SameSite: http.SameSiteLaxMode,
 	})
 }
@@ -252,6 +257,35 @@ func syncBankBannedIP(ipAddress string, actor string, status string, reason stri
 		return err
 	}
 	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-Aegis-Token", syncToken)
+
+	client := &http.Client{Timeout: 2 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return fmt.Errorf("bank backend returned status %d", resp.StatusCode)
+	}
+	return nil
+}
+
+func syncBankClearBannedIPs() error {
+	bankURL := os.Getenv("BANK_BACKEND_URL")
+	if bankURL == "" {
+		return nil
+	}
+	syncToken := os.Getenv("AEGIS_INTERNAL_TOKEN")
+	if syncToken == "" {
+		return fmt.Errorf("AEGIS_INTERNAL_TOKEN is empty")
+	}
+
+	req, err := http.NewRequest(http.MethodPost, strings.TrimRight(bankURL, "/")+"/api/admin/security/banned-ips/clear", nil)
+	if err != nil {
+		return err
+	}
 	req.Header.Set("X-Aegis-Token", syncToken)
 
 	client := &http.Client{Timeout: 2 * time.Second}

@@ -276,7 +276,7 @@ func TestSecurity_Cookie_HttpOnly(t *testing.T) {
 }
 
 // TestSecurity_Cookie_Secure ensures the session cookie has the Secure flag
-// set, preventing transmission over unencrypted HTTP connections.
+// set in HTTPS/proxied production contexts.
 func TestSecurity_Cookie_Secure(t *testing.T) {
 	setupTestStores()
 
@@ -288,7 +288,8 @@ func TestSecurity_Cookie_Secure(t *testing.T) {
 	authMu.Unlock()
 
 	payload := `{"uid":"10001","token":"secure-flag-test-token"}`
-	req := httptest.NewRequest("POST", "/api/auth/login", bytes.NewBufferString(payload))
+	req := httptest.NewRequest("POST", "https://soc.littleboys.biz/api/auth/login", bytes.NewBufferString(payload))
+	req.Header.Set("X-Forwarded-Proto", "https")
 	req.RemoteAddr = "192.0.2.10:1234"
 	w := httptest.NewRecorder()
 	Login(w, req)
@@ -302,6 +303,38 @@ func TestSecurity_Cookie_Secure(t *testing.T) {
 		if c.Name == "session_token" {
 			if !c.Secure {
 				t.Error("Session cookie is missing Secure flag — transmittable over plain HTTP")
+			}
+			return
+		}
+	}
+	t.Error("No session_token cookie was set during login")
+}
+
+func TestSecurity_Cookie_LocalHTTPAllowsDevSession(t *testing.T) {
+	setupTestStores()
+
+	authMu.Lock()
+	otpStore["10001"] = otpData{
+		Token:     "local-http-test-token",
+		ExpiresAt: time.Now().Add(5 * time.Minute),
+	}
+	authMu.Unlock()
+
+	payload := `{"uid":"10001","token":"local-http-test-token"}`
+	req := httptest.NewRequest("POST", "http://127.0.0.1:8082/api/auth/login", bytes.NewBufferString(payload))
+	req.RemoteAddr = "127.0.0.1:1234"
+	w := httptest.NewRecorder()
+	Login(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("Login failed: expected 200, got %d", w.Code)
+	}
+
+	cookies := w.Result().Cookies()
+	for _, c := range cookies {
+		if c.Name == "session_token" {
+			if c.Secure {
+				t.Error("Local HTTP session cookie should not use Secure; browsers will not send it to http://127.0.0.1")
 			}
 			return
 		}

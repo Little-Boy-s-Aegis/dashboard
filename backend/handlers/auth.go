@@ -119,6 +119,45 @@ func generateSessionToken() string {
 	return hex.EncodeToString(b)
 }
 
+func secureCookieForRequest(r *http.Request) bool {
+	if r == nil {
+		return true
+	}
+	if isLoopbackRequest(r) {
+		return false
+	}
+	override := strings.ToLower(strings.TrimSpace(os.Getenv("AEGIS_COOKIE_SECURE")))
+	if override == "true" {
+		return true
+	}
+	if override == "false" {
+		return false
+	}
+	if r.TLS != nil {
+		return true
+	}
+	forwardedProto := strings.ToLower(strings.TrimSpace(strings.Split(r.Header.Get("X-Forwarded-Proto"), ",")[0]))
+	if forwardedProto == "https" {
+		return true
+	}
+	return true
+}
+
+func isLoopbackRequest(r *http.Request) bool {
+	return isLoopbackHost(r.Host) || isLoopbackHost(r.RemoteAddr)
+}
+
+func isLoopbackHost(host string) bool {
+	if host == "" {
+		return false
+	}
+	if h, _, err := net.SplitHostPort(host); err == nil {
+		host = h
+	}
+	host = strings.Trim(host, "[]")
+	return host == "localhost" || host == "127.0.0.1" || host == "::1"
+}
+
 // Helper: Get remote IP address
 func getIP(r *http.Request) string {
 	return requestClientIP(r)
@@ -372,7 +411,7 @@ func Login(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	delete(lockoutStore, lockKey) // reset lockout counter
-	_ = os.Remove("otp.txt")       // Delete OTP retrieval file after successful consumption
+	_ = os.Remove("otp.txt")      // Delete OTP retrieval file after successful consumption
 
 	// Mapped Username
 	var username string
@@ -404,14 +443,15 @@ func Login(w http.ResponseWriter, r *http.Request) {
 
 	log.Printf("[SECURITY AUTH] Successful login for UID: %s (%s) from IP: %s. Session active for 8 hours.", uid, username, ip)
 
-	// Set HttpOnly, Secure, SameSite secure cookie for session token
+	// Keep Secure cookies in HTTPS/proxy deployments, but allow local HTTP dev
+	// at 127.0.0.1/localhost so the browser can send the session cookie.
 	cookie := &http.Cookie{
 		Name:     "session_token",
 		Value:    sessionToken,
 		Path:     "/",
 		Expires:  expiresAt,
 		HttpOnly: true,
-		Secure:   true, // Set to true to enforce HTTPS/secure transmission
+		Secure:   secureCookieForRequest(r),
 		SameSite: http.SameSiteLaxMode,
 	}
 	http.SetCookie(w, cookie)
@@ -467,7 +507,7 @@ func Logout(w http.ResponseWriter, r *http.Request) {
 		Path:     "/",
 		Expires:  time.Unix(0, 0),
 		HttpOnly: true,
-		Secure:   true, // Set to true to enforce HTTPS/secure transmission
+		Secure:   secureCookieForRequest(r),
 		SameSite: http.SameSiteLaxMode,
 	}
 	http.SetCookie(w, clearCookie)

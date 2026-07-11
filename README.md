@@ -23,7 +23,7 @@ go run main.go
 ```
 - The SOC API server will start listening on **`http://localhost:8082`**.
 - It automatically tries to connect to PostgreSQL. If PostgreSQL is offline, it gracefully falls back to **In-Memory database mode** so you can still explore the application.
-- It will attempt to read security logs from Kafka on `localhost:9094`.
+- If `KAFKA_BOOTSTRAP_SERVERS` is set, it will read security logs from Kafka. Without that variable, Kafka ingestion is disabled and the backend still polls the bank security-log API.
 
 ### 2. Start the React Frontend Dev Server
 In a separate terminal window:
@@ -40,7 +40,7 @@ npm run dev
 ## Environment Variables (Go Backend)
 Set these variables in your terminal to override default parameters:
 - `DATABASE_URL`: Postgres DSN connection string (e.g. `postgres://postgres:1@localhost:5432/aegis?sslmode=disable`).
-- `KAFKA_BOOTSTRAP_SERVERS`: Kafka broker addresses (e.g. `localhost:9094`).
+- `KAFKA_BOOTSTRAP_SERVERS`: Optional Kafka broker addresses for realtime security-event and L2 clean-log ingestion (e.g. `localhost:9094`).
 
 ---
 
@@ -79,4 +79,3 @@ The frontend container compiles the Vite project into static assets and uses int
 * **Dynamic Simulation & Seeding Controls**: Implemented dynamic seeding toggles in the Go API backend. Database auto-seeding and the threat activity simulator are now optional and controlled dynamically at runtime via the `AEGIS_SIMULATION_ENABLED` environment variable.
 * **Go Backend Log Sanitization**: Added a custom `LogSanitizerWriter` wrapper around backend logging outputs to intercept and sanitize security-sensitive event logs, preventing internal credential/token disclosure.
 * **Path Traversal & SOC Gateway Validation**: Integrated backend security validation tests ensuring API routing is secured against path traversal escapes and unauthorized SOAR gateway bypass actions.
-

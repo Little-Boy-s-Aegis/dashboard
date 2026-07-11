@@ -15,6 +15,16 @@ interface Props {
   alerts: Alert[];
 }
 
+const SECURITY_ACTION_TYPES = new Set([
+  'Block IP',
+  'Unblock IP',
+  'Unblock All IPs',
+  'Isolate Host',
+  'Terminate Process',
+  'Revoke Credentials',
+  'Force Logout',
+]);
+
 export default function SoarPerformanceDashboard({ actions, alerts }: Props) {
   const [metrics, setMetrics] = useState<SoarMetrics | null>(null);
   const [loading, setLoading] = useState(true);
@@ -94,6 +104,29 @@ export default function SoarPerformanceDashboard({ actions, alerts }: Props) {
     }
   };
 
+  const unbanAllIPs = async () => {
+    if (!window.confirm("Are you sure you want to unban all IPs? This will clear all active firewall bans.")) {
+      return;
+    }
+    try {
+      const res = await fetch('/api/actions', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          actor: 'SOC Operator',
+          actionType: 'Unblock All IPs',
+          target: 'ALL',
+          message: 'Manual unban all IPs requested from SOC Dashboard'
+        })
+      });
+      if (res.ok) {
+        fetchBannedIPs();
+      }
+    } catch (e) {
+      console.error('Failed to unban all IPs:', e);
+    }
+  };
+
   useEffect(() => {
     fetchMetrics();
     fetchSettings();
@@ -115,8 +148,8 @@ export default function SoarPerformanceDashboard({ actions, alerts }: Props) {
   }
 
   // Filter actions handled by the SOAR engine
-  const soarActions = (actions || []).filter(act => 
-    act && act.actor && (act.actor.includes('SOAR') || act.actor.includes('AI'))
+  const soarActions = (actions || []).filter(act =>
+    act && act.actor && SECURITY_ACTION_TYPES.has(act.actionType) && (act.actor.includes('SOAR') || act.actor.includes('AI'))
   );
 
   const slaStats = (() => {
@@ -178,17 +211,17 @@ export default function SoarPerformanceDashboard({ actions, alerts }: Props) {
       {/* KPI Cards */}
       <div className="kpi-grid" style={{ gridTemplateColumns: 'repeat(4, 1fr)', gap: 12 }}>
         
-        {/* Total Playbooks Run */}
+        {/* Total Security Actions Run */}
         <div className="glass-panel kpi-card" style={{ padding: '16px 20px', borderLeft: '3px solid var(--accent)' }}>
           <div className="kpi-header">
-            <span className="kpi-title" style={{ letterSpacing: '0.05em' }}>TOTAL PLAYBOOKS RUN</span>
+            <span className="kpi-title" style={{ letterSpacing: '0.05em' }}>SECURITY ACTIONS</span>
             <Play size={14} style={{ color: 'var(--accent)', opacity: 0.6 }} />
           </div>
           <div className="kpi-value" style={{ fontFamily: "'IBM Plex Mono', monospace", fontSize: '2rem', fontWeight: 700, margin: '8px 0 4px' }}>
             {metrics.totalPlaybooks}
           </div>
           <div className="kpi-trend" style={{ fontSize: '0.7rem', color: 'var(--text-3)' }}>
-            Automated playbook flows triggered
+            Persisted containment or recovery actions
           </div>
         </div>
 
@@ -406,7 +439,7 @@ export default function SoarPerformanceDashboard({ actions, alerts }: Props) {
         <div style={{ background: 'var(--bg-surface)', padding: '12px 16px', borderBottom: '1px solid var(--border-1)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
           <span style={{ fontSize: '0.85rem', fontWeight: 600, color: 'var(--text-0)', display: 'flex', alignItems: 'center', gap: 8 }}>
             <ShieldCheck size={16} style={{ color: 'var(--accent)' }} />
-            PostgreSQL Centralized WAF IP Block & Ban Registry
+            Auto-ban Registry & WAF IP Blocks
           </span>
           <span style={{ fontSize: '0.7rem', color: 'var(--text-3)', fontFamily: "'IBM Plex Mono', monospace" }}>
             {bannedIPs.filter(ip => ip.status === 'active').length} Active Bans
@@ -414,7 +447,7 @@ export default function SoarPerformanceDashboard({ actions, alerts }: Props) {
         </div>
 
         {/* Search Bar */}
-        <div style={{ padding: '10px 16px', borderBottom: '1px solid var(--border-1)', display: 'flex', gap: 8, alignItems: 'center' }}>
+        <div style={{ padding: '10px 16px', borderBottom: '1px solid var(--border-1)', display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8 }}>
           <input 
             type="text" 
             placeholder="Search Banned IPs by Address or Reason..." 
@@ -432,6 +465,26 @@ export default function SoarPerformanceDashboard({ actions, alerts }: Props) {
               outline: 'none'
             }} 
           />
+          {bannedIPs.filter(ip => ip.status === 'active').length > 0 && (
+            <button
+              className="btn btn-outline"
+              style={{
+                height: 28,
+                padding: '0 12px',
+                fontSize: '0.74rem',
+                borderColor: 'var(--critical)',
+                color: 'var(--critical)',
+                borderRadius: 4,
+                cursor: 'pointer',
+                display: 'flex',
+                alignItems: 'center',
+                gap: 6
+              }}
+              onClick={unbanAllIPs}
+            >
+              <XCircle size={14} /> Unban All IPs
+            </button>
+          )}
         </div>
 
         <div style={{ padding: '8px 12px', overflowX: 'auto' }}>
@@ -447,7 +500,7 @@ export default function SoarPerformanceDashboard({ actions, alerts }: Props) {
               </tr>
             </thead>
             <tbody>
-              {bannedIPs.filter(b => b.status === 'active' && (b.ipAddress.includes(searchIP) || b.reason.toLowerCase().includes(searchIP.toLowerCase()))).map(b => (
+              {bannedIPs.filter(b => b.status === 'active' && (b.ipAddress.includes(searchIP) || (b.reason || '').toLowerCase().includes(searchIP.toLowerCase()))).map(b => (
                 <tr key={b.ipAddress} style={{ borderBottom: '1px solid var(--border-0)', color: 'var(--text-1)' }}>
                   <td style={{ padding: '10px 12px', fontWeight: 600, fontFamily: "'IBM Plex Mono', monospace" }}>{b.ipAddress}</td>
                   <td style={{ padding: '10px 12px', color: 'var(--text-3)' }}>
@@ -489,7 +542,7 @@ export default function SoarPerformanceDashboard({ actions, alerts }: Props) {
                   </td>
                 </tr>
               ))}
-              {bannedIPs.filter(b => b.status === 'active' && (b.ipAddress.includes(searchIP) || b.reason.toLowerCase().includes(searchIP.toLowerCase()))).length === 0 && (
+              {bannedIPs.filter(b => b.status === 'active' && (b.ipAddress.includes(searchIP) || (b.reason || '').toLowerCase().includes(searchIP.toLowerCase()))).length === 0 && (
                 <tr>
                   <td colSpan={6} style={{ textAlign: 'center', padding: '30px 0', color: 'var(--text-3)' }}>
                     No active WAF IP blocks matching filter.
