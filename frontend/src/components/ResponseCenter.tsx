@@ -50,11 +50,8 @@ export default function ResponseCenter({ agents, alerts, actions, timeRange, set
 
   const filteredAlerts = alerts.filter(a => filterByTimeRange(a.timestamp));
 
-  // Get Top 3 Agents (A1, A2, A3) details
-  const a1 = agents.find(a => a.id === 'agent-01') || agents[0];
-  const a2 = agents.find(a => a.id === 'agent-02') || agents[1];
-  const a3 = agents.find(a => a.id === 'agent-03') || agents[2];
-  const targetAgents = [a1, a2, a3].filter(Boolean);
+  // Get all target agents dynamically
+  const targetAgents = agents;
 
   const getHighestSeverityForAgent = (agentId: string) => {
     const agentAlerts = filteredAlerts.filter(a => a.agentId === agentId && a.status !== 'resolved');
