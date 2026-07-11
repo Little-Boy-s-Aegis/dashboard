@@ -175,6 +175,7 @@ func main() {
 	mux.HandleFunc("/api/auth/login", handlers.Login)
 	mux.HandleFunc("/api/auth/logout", handlers.Logout)
 	mux.HandleFunc("/api/auth/check", handlers.CheckAuth)
+	mux.HandleFunc("/api/operators", handlers.GetOperators)
 
 	// API Routes
 	mux.HandleFunc("/api/summary", handlers.GetSummary)
