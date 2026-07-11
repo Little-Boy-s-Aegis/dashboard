@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { Shield, AlertTriangle, Monitor, FileText, Terminal, Activity, Clock, Zap, LogOut, User, RefreshCw, Cpu, Layout } from 'lucide-react';
+import { Shield, AlertTriangle, Monitor, FileText, Terminal, Activity, Clock, Zap, LogOut, User, RefreshCw, Cpu, Layout, MessageSquare } from 'lucide-react';
 import type { Agent, Alert, FIMEvent, DashboardSummary, ActionLog } from './types';
 import DashboardOverview from './components/DashboardOverview';
 import AlertsManager from './components/AlertsManager';
@@ -10,6 +10,7 @@ import ResponseCenter from './components/ResponseCenter';
 import SoarPerformanceDashboard from './components/SoarPerformanceDashboard';
 import Login from './components/Login';
 import CloudWatchDashboard from './components/CloudWatchDashboard';
+import OrchestratorChat from './components/OrchestratorChat';
 
 export default function App() {
   const [isAuthenticated, setIsAuthenticated] = useState<boolean | null>(null);
@@ -153,6 +154,8 @@ export default function App() {
         return <LogExplorer onRefresh={refreshAllData} />;
       case 'cloudwatch':
         return <CloudWatchDashboard agents={agents} recentAlerts={alerts} />;
+      case 'orchestrator-chat':
+        return <OrchestratorChat agents={agents} />;
       default:
         return <div style={{ padding: 40, textAlign: 'center' }}><h2>Not Found</h2></div>;
     }
@@ -163,6 +166,7 @@ export default function App() {
 
   const navItems = [
     { key: 'cloudwatch', icon: Layout, label: 'Dashboard' },
+    { key: 'orchestrator-chat', icon: MessageSquare, label: 'Orchestrator Chat' },
     { key: 'overview', icon: Activity, label: 'Overview' },
     { key: 'alerts', icon: AlertTriangle, label: 'Alerts', badge: totalActive },
     { key: 'actions', icon: Zap, label: 'Response Center' },
