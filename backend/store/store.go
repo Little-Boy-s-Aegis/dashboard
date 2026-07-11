@@ -535,9 +535,32 @@ func (db *Database) persistSeed() {
 
 func (db *Database) startSyncLoop() {
 	syncTicker := time.NewTicker(2 * time.Second)
+	metricTicker := time.NewTicker(3 * time.Second)
 	log.Printf("[SYNC] Starting background security log synchronization loop...")
-	for range syncTicker.C {
-		db.syncBankSecurityLogs()
+	for {
+		select {
+		case <-syncTicker.C:
+			db.syncBankSecurityLogs()
+		case <-metricTicker.C:
+			db.Mu.Lock()
+			// Fluctuate CPU/RAM/Disk metrics slightly
+			for _, agent := range db.Agents {
+				if agent.Status == "active" {
+					agent.CPUUsage = clamp(agent.CPUUsage+rand.Float64()*10-5, 2.0, 95.0)
+					agent.RAMUsage = clamp(agent.RAMUsage+rand.Float64()*4-2, 10.0, 95.0)
+					agent.DiskUsage = clamp(agent.DiskUsage+rand.Float64()*0.1, 10.0, 99.0)
+					agent.LastSeen = time.Now()
+				} else if agent.Status == "alerting" {
+					// Alerting agents have higher CPU/RAM usage
+					agent.CPUUsage = clamp(agent.CPUUsage+rand.Float64()*10-3, 60.0, 99.0)
+					agent.RAMUsage = clamp(agent.RAMUsage+rand.Float64()*5-1, 75.0, 98.0)
+					agent.LastSeen = time.Now()
+				}
+				db.SaveAgent(agent)
+			}
+			db.updateAgentThreatsAndNetwork()
+			db.Mu.Unlock()
+		}
 	}
 }
 

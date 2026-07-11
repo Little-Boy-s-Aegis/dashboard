@@ -13,9 +13,20 @@ export default function AgentManager({ agents }: Props) {
 
   useEffect(() => {
     if (selId) {
-      setLoading(true);
-      fetch(`/api/agents/${selId}`).then(r => r.json()).then(d => { setDetail(d); setLoading(false); }).catch(() => setLoading(false));
-    } else setDetail(null);
+      const isInitial = !detail || detail.agent.id !== selId;
+      if (isInitial) {
+        setLoading(true);
+      }
+      fetch(`/api/agents/${selId}`)
+        .then(r => r.json())
+        .then(d => {
+          setDetail(d);
+          setLoading(false);
+        })
+        .catch(() => setLoading(false));
+    } else {
+      setDetail(null);
+    }
   }, [selId, agents]);
 
   const copy = (cmd: string, id: string) => { navigator.clipboard.writeText(cmd); setCopied(id); setTimeout(() => setCopied(null), 2000); };
