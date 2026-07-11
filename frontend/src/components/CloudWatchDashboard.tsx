@@ -73,10 +73,31 @@ const DEFAULT_WIDGETS: Widget[] = [
   }
 ];
 
+const overlaps = (w1: Widget, w2: Widget) => {
+  const w1x = Number(w1.x);
+  const w1y = Number(w1.y);
+  const w1w = Number(w1.w);
+  const w1h = Number(w1.h);
+
+  const w2x = Number(w2.x);
+  const w2y = Number(w2.y);
+  const w2w = Number(w2.w);
+  const w2h = Number(w2.h);
+
+  return !(
+    w1x + w1w <= w2x ||
+    w2x + w2w <= w1x ||
+    w1y + w1h <= w2y ||
+    w2y + w2h <= w1y
+  );
+};
+
 const resolveCollisions = (allWidgets: Widget[], activeId: string): Widget[] => {
   const sorted = [...allWidgets].sort((a, b) => {
-    if (a.y !== b.y) return a.y - b.y;
-    return a.x - b.x;
+    const ay = Number(a.y);
+    const by = Number(b.y);
+    if (ay !== by) return ay - by;
+    return Number(a.x) - Number(b.x);
   });
 
   const activeWidget = sorted.find(w => w.id === activeId);
@@ -84,15 +105,6 @@ const resolveCollisions = (allWidgets: Widget[], activeId: string): Widget[] => 
 
   const positioned: Widget[] = [];
   positioned.push(activeWidget);
-
-  const overlaps = (w1: Widget, w2: Widget) => {
-    return !(
-      w1.x + w1.w <= w2.x ||
-      w2.x + w2.w <= w1.x ||
-      w1.y + w1.h <= w2.y ||
-      w2.y + w2.h <= w1.y
-    );
-  };
 
   sorted.forEach(w => {
     if (w.id === activeId) return;
@@ -104,7 +116,7 @@ const resolveCollisions = (allWidgets: Widget[], activeId: string): Widget[] => 
       hasCollision = false;
       for (const other of positioned) {
         if (overlaps(current, other)) {
-          current.y = other.y + other.h;
+          current.y = Number(other.y) + Number(other.h);
           hasCollision = true;
           break;
         }
@@ -117,22 +129,13 @@ const resolveCollisions = (allWidgets: Widget[], activeId: string): Widget[] => 
 };
 
 const compactLayout = (allWidgets: Widget[]): Widget[] => {
-  const sorted = [...allWidgets].sort((a, b) => a.y - b.y);
+  const sorted = [...allWidgets].sort((a, b) => Number(a.y) - Number(b.y));
   const compacted: Widget[] = [];
-  
-  const overlaps = (w1: Widget, w2: Widget) => {
-    return !(
-      w1.x + w1.w <= w2.x ||
-      w2.x + w2.w <= w1.x ||
-      w1.y + w1.h <= w2.y ||
-      w2.y + w2.h <= w1.y
-    );
-  };
 
   sorted.forEach(w => {
     let current = { ...w };
-    while (current.y > 0) {
-      current.y--;
+    while (Number(current.y) > 0) {
+      current.y = Number(current.y) - 1;
       let collides = false;
       for (const other of compacted) {
         if (overlaps(current, other)) {
@@ -141,7 +144,7 @@ const compactLayout = (allWidgets: Widget[]): Widget[] => {
         }
       }
       if (collides) {
-        current.y++;
+        current.y = Number(current.y) + 1;
         break;
       }
     }
@@ -446,12 +449,7 @@ export default function CloudWatchDashboard({ agents, recentAlerts }: Props) {
   const displayWidgets = (() => {
     if (activeDragId && ghostCoords) {
       const temp = widgets.map(w => w.id === activeDragId ? { ...w, x: ghostCoords.x, y: ghostCoords.y } : w);
-      const resolved = resolveCollisions(temp, activeDragId);
-      const original = widgets.find(w => w.id === activeDragId);
-      if (original) {
-        return resolved.map(w => w.id === activeDragId ? { ...w, x: original.x, y: original.y } : w);
-      }
-      return resolved;
+      return resolveCollisions(temp, activeDragId);
     }
     if (activeResizeId) {
       return resolveCollisions(widgets, activeResizeId);
@@ -582,30 +580,45 @@ export default function CloudWatchDashboard({ agents, recentAlerts }: Props) {
           />
         )}
 
-        {displayWidgets.map(w => (
-          <div
-            key={w.id}
-            style={{
-              gridColumn: `${w.x + 1} / span ${w.w}`,
-              gridRow: `${w.y + 1} / span ${w.h}`,
-              display: 'flex',
-              flexDirection: 'column',
-              zIndex: (activeDragId === w.id || activeResizeId === w.id) ? 100 : 10,
-              boxShadow: (activeDragId === w.id || activeResizeId === w.id) 
-                ? '0 12px 32px rgba(255, 153, 0, 0.15), 0 0 0 1px rgba(255, 153, 0, 0.4)' 
-                : '0 4px 12px rgba(0,0,0,0.1)',
-              borderColor: (activeDragId === w.id || activeResizeId === w.id) 
-                ? 'rgba(255, 153, 0, 0.4)' 
-                : undefined,
-              transform: (activeDragId === w.id && dragOffset) 
-                ? `translate3d(${dragOffset.x}px, ${dragOffset.y}px, 0)` 
-                : undefined,
-              opacity: activeDragId === w.id ? 0.85 : 1,
-              transition: (activeDragId === w.id || activeResizeId === w.id) ? 'none' : 'box-shadow 0.2s ease, border-color 0.2s ease',
-              borderTop: '3px solid #ff9900' // orange accent bar for AWS style!
-            }}
-            className="glass-panel"
-          >
+        {displayWidgets.map(w => {
+          let transformStyle: string | undefined = undefined;
+          const isDragged = activeDragId === w.id;
+          
+          if (isDragged && dragOffset && ghostCoords) {
+            const original = widgets.find(x => x.id === w.id);
+            if (original) {
+              const rect = containerRef.current?.getBoundingClientRect();
+              const colWidth = rect ? rect.width / 12 : 1;
+              const offsetCol = (Number(ghostCoords.x) - Number(original.x)) * colWidth;
+              const offsetRow = (Number(ghostCoords.y) - Number(original.y)) * 40;
+              const dx = dragOffset.x - offsetCol;
+              const dy = dragOffset.y - offsetRow;
+              transformStyle = `translate3d(${dx}px, ${dy}px, 0)`;
+            }
+          }
+
+          return (
+            <div
+              key={w.id}
+              style={{
+                gridColumn: `${w.x + 1} / span ${w.w}`,
+                gridRow: `${w.y + 1} / span ${w.h}`,
+                display: 'flex',
+                flexDirection: 'column',
+                zIndex: (activeDragId === w.id || activeResizeId === w.id) ? 100 : 10,
+                boxShadow: (activeDragId === w.id || activeResizeId === w.id) 
+                  ? '0 12px 32px rgba(255, 153, 0, 0.15), 0 0 0 1px rgba(255, 153, 0, 0.4)' 
+                  : '0 4px 12px rgba(0,0,0,0.1)',
+                borderColor: (activeDragId === w.id || activeResizeId === w.id) 
+                  ? 'rgba(255, 153, 0, 0.4)' 
+                  : undefined,
+                transform: transformStyle,
+                opacity: activeDragId === w.id ? 0.85 : 1,
+                transition: (activeDragId === w.id || activeResizeId === w.id) ? 'none' : 'box-shadow 0.2s ease, border-color 0.2s ease',
+                borderTop: '3px solid #ff9900' // orange accent bar for AWS style!
+              }}
+              className="glass-panel"
+            >
             {/* Widget Header */}
             <div 
               style={{ 
@@ -661,7 +674,8 @@ export default function CloudWatchDashboard({ agents, recentAlerts }: Props) {
               onMouseDown={(e) => handleResizeStart(e, w.id)}
             />
           </div>
-        ))}
+        );
+      })}
 
         {widgets.length === 0 && (
           <div style={{ gridColumn: '1 / span 12', gridRow: '2 / span 4', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', color: 'var(--text-3)', gap: 8 }}>
