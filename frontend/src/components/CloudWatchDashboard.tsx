@@ -336,8 +336,8 @@ export default function CloudWatchDashboard({ agents, recentAlerts }: Props) {
 
     const rect = containerRef.current?.getBoundingClientRect();
     if (!rect) return;
-    const colWidth = rect.width / 12;
-    const rowHeight = 40; // 40px per row grid unit
+    const colWidth = (rect.width - 24) / 12;
+    const rowHeight = 52; // 40px height + 12px gap
 
     const startX = e.clientX;
     const startY = e.clientY;
@@ -395,8 +395,8 @@ export default function CloudWatchDashboard({ agents, recentAlerts }: Props) {
     setActiveResizeId(widgetId);
     const rect = containerRef.current?.getBoundingClientRect();
     if (!rect) return;
-    const colWidth = rect.width / 12;
-    const rowHeight = 40;
+    const colWidth = (rect.width - 24) / 12;
+    const rowHeight = 52; // 40px height + 12px gap
 
     const startX = e.clientX;
     const startY = e.clientY;
@@ -543,78 +543,77 @@ export default function CloudWatchDashboard({ agents, recentAlerts }: Props) {
       <div 
         ref={containerRef}
         style={{ 
-          display: 'grid', 
-          gridTemplateColumns: 'repeat(12, 1fr)', 
-          gridAutoRows: '40px', // 40px per row grid unit
-          gap: 12, 
           position: 'relative', 
           background: 'rgba(0, 0, 0, 0.15)',
           backgroundImage: (activeDragId || activeResizeId) 
             ? 'radial-gradient(rgba(255, 153, 0, 0.12) 1px, transparent 1px)' 
             : 'radial-gradient(rgba(255, 255, 255, 0.03) 1px, transparent 1px)',
           backgroundSize: (activeDragId || activeResizeId) 
-            ? '8.333% 40px' 
+            ? 'calc((100% - 11 * 12px) / 12 + 12px) 52px' 
             : '32px 32px',
           borderRadius: 'var(--r-md)',
           padding: 12,
           minHeight: 'calc(100vh - 160px)',
+          height: Math.max(600, displayWidgets.reduce((max, w) => Math.max(max, Number(w.y) + Number(w.h)), 0) * 52 + 12 + 12),
           overflowY: 'auto',
           border: (activeDragId || activeResizeId) 
             ? '1px dashed rgba(255, 153, 0, 0.4)' 
             : '1px dashed var(--border-0)',
-          transition: 'background-image 0.2s ease, border-color 0.2s ease'
+          transition: 'background-image 0.2s ease, border-color 0.2s ease, height 0.3s cubic-bezier(0.2, 0.8, 0.2, 1)'
         }}
       >
         {/* Ghost placeholder card showing snap coordinate while dragging */}
         {activeDragId && ghostCoords && (
           <div
             style={{
-              gridColumn: `${ghostCoords.x + 1} / span ${ghostCoords.w}`,
-              gridRow: `${ghostCoords.y + 1} / span ${ghostCoords.h}`,
+              position: 'absolute',
+              left: `calc(${ghostCoords.x} * (100% - 11 * 12px) / 12 + ${ghostCoords.x} * 12px + 12px)`,
+              top: `${ghostCoords.y * 52 + 12}px`,
+              width: `calc(${ghostCoords.w} * (100% - 11 * 12px) / 12 + (${ghostCoords.w} - 1) * 12px)`,
+              height: `${ghostCoords.h * 40 + (ghostCoords.h - 1) * 12}px`,
               border: '2px dashed rgba(255, 153, 0, 0.6)',
               background: 'rgba(255, 153, 0, 0.04)',
               borderRadius: 'var(--r-md)',
               zIndex: 5,
-              pointerEvents: 'none'
+              pointerEvents: 'none',
+              transition: 'left 0.15s cubic-bezier(0.2, 0.8, 0.2, 1), top 0.15s cubic-bezier(0.2, 0.8, 0.2, 1), width 0.15s cubic-bezier(0.2, 0.8, 0.2, 1), height 0.15s cubic-bezier(0.2, 0.8, 0.2, 1)'
             }}
           />
         )}
 
         {displayWidgets.map(w => {
-          let transformStyle: string | undefined = undefined;
           const isDragged = activeDragId === w.id;
-          
-          if (isDragged && dragOffset && ghostCoords) {
-            const original = widgets.find(x => x.id === w.id);
-            if (original) {
-              const rect = containerRef.current?.getBoundingClientRect();
-              const colWidth = rect ? rect.width / 12 : 1;
-              const offsetCol = (Number(ghostCoords.x) - Number(original.x)) * colWidth;
-              const offsetRow = (Number(ghostCoords.y) - Number(original.y)) * 40;
-              const dx = dragOffset.x - offsetCol;
-              const dy = dragOffset.y - offsetRow;
-              transformStyle = `translate3d(${dx}px, ${dy}px, 0)`;
-            }
-          }
+          const isResized = activeResizeId === w.id;
+          const original = widgets.find(x => x.id === w.id);
+
+          const renderX = isDragged && original ? original.x : w.x;
+          const renderY = isDragged && original ? original.y : w.y;
+          const renderW = isDragged && original ? original.w : w.w;
+          const renderH = isDragged && original ? original.h : w.h;
 
           return (
             <div
               key={w.id}
               style={{
-                gridColumn: `${w.x + 1} / span ${w.w}`,
-                gridRow: `${w.y + 1} / span ${w.h}`,
+                position: 'absolute',
+                left: `calc(${renderX} * (100% - 11 * 12px) / 12 + ${renderX} * 12px + 12px)`,
+                top: `${renderY * 52 + 12}px`,
+                width: `calc(${renderW} * (100% - 11 * 12px) / 12 + (${renderW} - 1) * 12px)`,
+                height: `${renderH * 40 + (renderH - 1) * 12}px`,
                 display: 'flex',
                 flexDirection: 'column',
-                zIndex: (activeDragId === w.id || activeResizeId === w.id) ? 100 : 10,
-                boxShadow: (activeDragId === w.id || activeResizeId === w.id) 
-                  ? '0 12px 32px rgba(255, 153, 0, 0.15), 0 0 0 1px rgba(255, 153, 0, 0.4)' 
+                zIndex: (isDragged || isResized) ? 100 : 10,
+                boxShadow: (isDragged || isResized) 
+                  ? '0 12px 32px rgba(255, 153, 0, 0.2), 0 0 0 1px rgba(255, 153, 0, 0.4)' 
                   : '0 4px 12px rgba(0,0,0,0.1)',
-                borderColor: (activeDragId === w.id || activeResizeId === w.id) 
+                borderColor: (isDragged || isResized) 
                   ? 'rgba(255, 153, 0, 0.4)' 
                   : undefined,
-                transform: transformStyle,
-                opacity: activeDragId === w.id ? 0.85 : 1,
-                transition: (activeDragId === w.id || activeResizeId === w.id) ? 'none' : 'box-shadow 0.2s ease, border-color 0.2s ease',
+                transform: (isDragged && dragOffset) ? `translate3d(${dragOffset.x}px, ${dragOffset.y}px, 0)` : undefined,
+                opacity: isDragged ? 0.85 : 1,
+                transition: (isDragged || isResized) 
+                  ? 'none' 
+                  : 'left 0.3s cubic-bezier(0.2, 0.8, 0.2, 1), top 0.3s cubic-bezier(0.2, 0.8, 0.2, 1), width 0.3s cubic-bezier(0.2, 0.8, 0.2, 1), height 0.3s cubic-bezier(0.2, 0.8, 0.2, 1), box-shadow 0.2s ease, border-color 0.2s ease',
                 borderTop: '3px solid #ff9900' // orange accent bar for AWS style!
               }}
               className="glass-panel"
