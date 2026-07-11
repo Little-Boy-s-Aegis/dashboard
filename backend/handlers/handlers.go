@@ -1811,11 +1811,16 @@ func LogSOCAction(actor string, actionType string, target string, status string,
 func LogSOCToSyslog(actor string, actionType string, target string, message string) {
 	logID := fmt.Sprintf("log-soc-%d-%s", time.Now().UnixNano(), generateSessionToken()[:8])
 	
+	actorName := actor
+	if !strings.HasPrefix(actorName, "SOC (") && !strings.HasPrefix(actorName, "SOAR") {
+		actorName = fmt.Sprintf("SOC (%s)", actor)
+	}
+
 	logEntry := &models.LogEntry{
 		ID:             logID,
 		Timestamp:      time.Now(),
 		AgentID:        "soc-console",
-		AgentName:      "SOC-Console",
+		AgentName:      actorName,
 		Facility:       "soc_audit",
 		Severity:       "info",
 		Message:        fmt.Sprintf("[%s] %s on %s: %s", actor, actionType, target, message),
