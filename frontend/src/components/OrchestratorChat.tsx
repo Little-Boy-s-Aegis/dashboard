@@ -47,8 +47,7 @@ export default function OrchestratorChat({ agents }: Props) {
   const chatEndRef = useRef<HTMLDivElement>(null);
   const jsonStreamRef = useRef<HTMLDivElement>(null);
   const chatScrollContainerRef = useRef<HTMLDivElement>(null);
-  const isScrollingChat = useRef(false);
-  const isScrollingJson = useRef(false);
+  const activeScrollSource = useRef<'chat' | 'json' | null>(null);
 
   // Fetch real-time security events & SOAR actions from the backend APIs
   useEffect(() => {
@@ -301,11 +300,17 @@ export default function OrchestratorChat({ agents }: Props) {
         });
 
         if (matchedAction) {
+          let actionTime = new Date(matchedAction.timestamp).getTime();
+          const alertTimeMs = new Date(alertTime).getTime();
+          if (actionTime <= alertTimeMs) {
+            actionTime = alertTimeMs + 100;
+          }
+
           realMsgList.push({
             id: `real-action-${matchedAction.id}`,
             sender: 'orchestrator',
             senderName: 'L2 SOAR Orchestrator (AI Triage)',
-            timestamp: new Date(matchedAction.timestamp).toISOString(),
+            timestamp: new Date(actionTime).toISOString(),
             message: `AI Assessment: Threat detected on ${agent.name}. Severity ${alert.severity.toUpperCase()}. Autopilot rule triggered: ${matchedAction.actionType}.`,
             details: JSON.stringify({
               ai_triage: {
@@ -334,7 +339,7 @@ export default function OrchestratorChat({ agents }: Props) {
             id: `real-ai-${alert.id}`,
             sender: 'orchestrator',
             senderName: 'L2 SOAR Orchestrator (AI Triage)',
-            timestamp: alertTime,
+            timestamp: new Date(new Date(alertTime).getTime() + 100).toISOString(),
             message: `AI Assessment: Incident registered on ${agent.name}. Threat level is ${alert.severity.toUpperCase()}. Monitoring host parameters for anomalies.`,
             details: JSON.stringify({
               ai_triage: {
@@ -413,9 +418,8 @@ export default function OrchestratorChat({ agents }: Props) {
   }, [conversations, activeTab, isTyping]);
 
   const handleChatScroll = () => {
-    if (isScrollingJson.current) return;
+    if (activeScrollSource.current !== 'chat') return;
     if (chatScrollContainerRef.current && jsonStreamRef.current) {
-      isScrollingChat.current = true;
       const chatEl = chatScrollContainerRef.current;
       const jsonEl = jsonStreamRef.current;
 
@@ -428,10 +432,9 @@ export default function OrchestratorChat({ agents }: Props) {
         const child = chatChildren[i] as HTMLElement;
         if (child.id && child.id.startsWith('msg-left-')) {
           const childRect = child.getBoundingClientRect();
-          // The first child whose bottom is past the viewport top is the active visible child
           if (childRect.bottom >= chatRect.top) {
             activeId = child.id.replace('msg-left-', '');
-            offsetDiff = chatRect.top - childRect.top; // always >= 0
+            offsetDiff = chatRect.top - childRect.top;
             break;
           }
         }
@@ -446,17 +449,12 @@ export default function OrchestratorChat({ agents }: Props) {
           jsonEl.scrollTop = jsonEl.scrollTop + currentAlignDiff + offsetDiff;
         }
       }
-
-      setTimeout(() => {
-        isScrollingChat.current = false;
-      }, 50);
     }
   };
 
   const handleJsonScroll = () => {
-    if (isScrollingChat.current) return;
+    if (activeScrollSource.current !== 'json') return;
     if (chatScrollContainerRef.current && jsonStreamRef.current) {
-      isScrollingJson.current = true;
       const chatEl = chatScrollContainerRef.current;
       const jsonEl = jsonStreamRef.current;
 
@@ -486,10 +484,6 @@ export default function OrchestratorChat({ agents }: Props) {
           chatEl.scrollTop = chatEl.scrollTop + currentAlignDiff + offsetDiff;
         }
       }
-
-      setTimeout(() => {
-        isScrollingJson.current = false;
-      }, 50);
     }
   };
 
@@ -736,7 +730,7 @@ export default function OrchestratorChat({ agents }: Props) {
             <div style={{ display: 'flex', flexDirection: 'column', flex: 1, borderRight: inspectJsonMode ? '1px solid var(--border-1)' : undefined, minWidth: 0, height: '100%', minHeight: 0, overflow: 'hidden' }}>
               
               {/* Messages Feed Area */}
-              <div ref={chatScrollContainerRef} onScroll={handleChatScroll} style={{ flex: 1, overflowY: 'auto', padding: 16, display: 'flex', flexDirection: 'column', gap: 14, position: 'relative' }}>
+              <div ref={chatScrollContainerRef} onScroll={handleChatScroll} onMouseEnter={() => { activeScrollSource.current = 'chat'; }} style={{ flex: 1, overflowY: 'auto', padding: 16, display: 'flex', flexDirection: 'column', gap: 14, position: 'relative' }}>
                 
                 {activeConv?.messages.map((m) => {
                   const isOrchestrator = m.sender === 'orchestrator';
@@ -932,6 +926,7 @@ export default function OrchestratorChat({ agents }: Props) {
               <div 
                 ref={jsonStreamRef}
                 onScroll={handleJsonScroll}
+                onMouseEnter={() => { activeScrollSource.current = 'json'; }}
                 style={{ 
                   width: '42%', 
                   background: '#04070d', 
