@@ -70,6 +70,26 @@ const DEFAULT_WIDGETS: Widget[] = [
     widgetType: 'Gauge',
     metricName: 'threat',
     agentId: 'agent-01'
+  },
+  {
+    id: 'w-system-status',
+    x: 0, y: 12, w: 6, h: 5,
+    title: 'Aegis System Status',
+    dataSource: 'CloudWatch',
+    dataType: 'Metrics',
+    experience: 'Console',
+    widgetType: 'Number',
+    metricName: 'system_status'
+  },
+  {
+    id: 'w-active-alerts-count',
+    x: 6, y: 12, w: 6, h: 5,
+    title: 'Overall Active Incident Alerts',
+    dataSource: 'CloudWatch',
+    dataType: 'Metrics',
+    experience: 'Console',
+    widgetType: 'Number',
+    metricName: 'active_alerts'
   }
 ];
 
@@ -891,16 +911,18 @@ export default function CloudWatchDashboard({ agents, recentAlerts }: Props) {
 
                 {/* METRICS specific configs */}
                 {formDataType === 'Metrics' && (
-                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
-                    <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
-                      <label style={{ fontSize: '0.72rem', color: 'var(--text-3)', fontWeight: 600 }}>TARGET HOST</label>
-                      <select 
-                        value={formAgentId} onChange={e => setFormAgentId(e.target.value)} 
-                        className="select-input" style={{ width: '100%', background: 'var(--bg-surface)', border: '1px solid var(--border-1)', fontSize: '0.8rem' }}
-                      >
-                        {agents.map(a => <option key={a.id} value={a.id}>{a.name} ({a.ip})</option>)}
-                      </select>
-                    </div>
+                  <div style={{ display: 'grid', gridTemplateColumns: ['system_status', 'active_alerts', 'critical_alerts', 'agent_count'].includes(formMetricName) ? '1fr' : '1fr 1fr', gap: 12 }}>
+                    {!['system_status', 'active_alerts', 'critical_alerts', 'agent_count'].includes(formMetricName) && (
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+                        <label style={{ fontSize: '0.72rem', color: 'var(--text-3)', fontWeight: 600 }}>TARGET HOST</label>
+                        <select 
+                          value={formAgentId} onChange={e => setFormAgentId(e.target.value)} 
+                          className="select-input" style={{ width: '100%', background: 'var(--bg-surface)', border: '1px solid var(--border-1)', fontSize: '0.8rem' }}
+                        >
+                          {agents.map(a => <option key={a.id} value={a.id}>{a.name} ({a.ip})</option>)}
+                        </select>
+                      </div>
+                    )}
                     <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
                       <label style={{ fontSize: '0.72rem', color: 'var(--text-3)', fontWeight: 600 }}>METRIC NAME</label>
                       <select 
@@ -912,6 +934,10 @@ export default function CloudWatchDashboard({ agents, recentAlerts }: Props) {
                         <option value="disk">Disk Usage (%)</option>
                         <option value="threat">Threat Score</option>
                         <option value="network">Network Traffic (Mbps)</option>
+                        <option value="system_status">System Status (Safe/Alerting)</option>
+                        <option value="active_alerts">Active Alerts Count</option>
+                        <option value="critical_alerts">Critical Alerts Count</option>
+                        <option value="agent_count">Online Agents Count</option>
                       </select>
                     </div>
                   </div>
@@ -1010,27 +1036,45 @@ function WidgetContent({ widget, agents, recentAlerts }: ContentProps) {
 
   const targetAgent = agents.find(a => a.id === widget.agentId);
 
-  // Generate a mock metric history series based on current real-time agent metrics
+  // Generate a mock metric history series based on current real-time agent metrics or system metrics
   useEffect(() => {
-    if (widget.dataType === 'Metrics' && targetAgent) {
+    if (widget.dataType === 'Metrics') {
       let currentVal = 0;
-      if (widget.metricName === 'cpu') currentVal = targetAgent.cpuUsage;
-      else if (widget.metricName === 'ram') currentVal = targetAgent.ramUsage;
-      else if (widget.metricName === 'disk') currentVal = targetAgent.diskUsage;
-      else if (widget.metricName === 'threat') currentVal = targetAgent.threatScore;
-      else if (widget.metricName === 'network') currentVal = (targetAgent.networkIn + targetAgent.networkOut);
+      const isSystemMetric = ['system_status', 'active_alerts', 'critical_alerts', 'agent_count'].includes(widget.metricName || '');
+
+      if (isSystemMetric) {
+        if (widget.metricName === 'system_status') {
+          const hasAlertingAgent = agents.some(a => a.status === 'alerting');
+          const hasOpenCriticalAlert = recentAlerts.some(a => a.severity === 'critical' && a.status !== 'resolved');
+          currentVal = (hasAlertingAgent || hasOpenCriticalAlert) ? 0 : 1;
+        } else if (widget.metricName === 'active_alerts') {
+          currentVal = recentAlerts.filter(a => a.status !== 'resolved').length;
+        } else if (widget.metricName === 'critical_alerts') {
+          currentVal = recentAlerts.filter(a => a.status !== 'resolved' && a.severity === 'critical').length;
+        } else if (widget.metricName === 'agent_count') {
+          currentVal = agents.filter(a => a.status === 'active' || a.status === 'alerting').length;
+        }
+      } else if (targetAgent) {
+        if (widget.metricName === 'cpu') currentVal = targetAgent.cpuUsage;
+        else if (widget.metricName === 'ram') currentVal = targetAgent.ramUsage;
+        else if (widget.metricName === 'disk') currentVal = targetAgent.diskUsage;
+        else if (widget.metricName === 'threat') currentVal = targetAgent.threatScore;
+        else if (widget.metricName === 'network') currentVal = (targetAgent.networkIn + targetAgent.networkOut);
+      } else {
+        return;
+      }
 
       // Generate 12 historical points ending in the current value
       const history: number[] = [];
       for (let i = 0; i < 12; i++) {
-        // slightly randomize previous values
-        const variance = (Math.random() - 0.5) * (currentVal * 0.15);
-        history.push(Math.max(0, Math.min(100, Math.round(currentVal + variance))));
+        // slightly randomize previous values (only for numeric indicators, not binary status)
+        const variance = widget.metricName === 'system_status' ? 0 : (Math.random() - 0.5) * (currentVal * 0.15);
+        history.push(Math.max(0, Math.round(currentVal + variance)));
       }
       history[history.length - 1] = currentVal; // ensure last element is exact current value
       setMetricHistory(history);
     }
-  }, [widget.agentId, widget.metricName, agents]);
+  }, [widget.agentId, widget.metricName, agents, recentAlerts]);
 
   // Fetch real-time log data if type is Logs
   useEffect(() => {
@@ -1192,7 +1236,9 @@ function WidgetContent({ widget, agents, recentAlerts }: ContentProps) {
 
   // RENDER METRICS
   if (widget.dataType === 'Metrics') {
-    if (!targetAgent) {
+    const isSystemMetric = ['system_status', 'active_alerts', 'critical_alerts', 'agent_count'].includes(widget.metricName || '');
+
+    if (!targetAgent && !isSystemMetric) {
       return (
         <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--text-3)', fontSize: '0.8rem' }}>
           No host selected or active.
@@ -1200,38 +1246,63 @@ function WidgetContent({ widget, agents, recentAlerts }: ContentProps) {
       );
     }
 
-    let metricValue = 0;
+    let metricValue: number | string = 0;
     let suffix = '%';
     let color = 'var(--accent)';
 
-    if (widget.metricName === 'cpu') {
-      metricValue = targetAgent.cpuUsage;
-      color = 'var(--info)';
-    } else if (widget.metricName === 'ram') {
-      metricValue = targetAgent.ramUsage;
-      color = 'var(--purple)';
-    } else if (widget.metricName === 'disk') {
-      metricValue = targetAgent.diskUsage;
-      color = '#38bdf8';
-    } else if (widget.metricName === 'threat') {
-      metricValue = targetAgent.threatScore;
-      suffix = '/100';
-      color = metricValue > 70 ? 'var(--critical)' : metricValue > 40 ? 'var(--high)' : 'var(--low)';
-    } else if (widget.metricName === 'network') {
-      metricValue = Math.round(targetAgent.networkIn + targetAgent.networkOut);
-      suffix = ' Mbps';
-      color = '#10b981';
+    if (isSystemMetric) {
+      if (widget.metricName === 'system_status') {
+        const hasAlertingAgent = agents.some(a => a.status === 'alerting');
+        const hasOpenCriticalAlert = recentAlerts.some(a => a.severity === 'critical' && a.status !== 'resolved');
+        const isSafe = !(hasAlertingAgent || hasOpenCriticalAlert);
+        metricValue = isSafe ? 'SAFE' : 'ALERTING';
+        suffix = '';
+        color = isSafe ? 'var(--low)' : 'var(--critical)';
+      } else if (widget.metricName === 'active_alerts') {
+        const count = recentAlerts.filter(a => a.status !== 'resolved').length;
+        metricValue = count;
+        suffix = '';
+        color = count > 0 ? 'var(--critical)' : 'var(--low)';
+      } else if (widget.metricName === 'critical_alerts') {
+        const count = recentAlerts.filter(a => a.status !== 'resolved' && a.severity === 'critical').length;
+        metricValue = count;
+        suffix = '';
+        color = count > 0 ? 'var(--critical)' : 'var(--low)';
+      } else if (widget.metricName === 'agent_count') {
+        metricValue = agents.filter(a => a.status === 'active' || a.status === 'alerting').length;
+        suffix = ` / ${agents.length}`;
+        color = 'var(--accent)';
+      }
+    } else if (targetAgent) {
+      if (widget.metricName === 'cpu') {
+        metricValue = targetAgent.cpuUsage;
+        color = 'var(--info)';
+      } else if (widget.metricName === 'ram') {
+        metricValue = targetAgent.ramUsage;
+        color = 'var(--purple)';
+      } else if (widget.metricName === 'disk') {
+        metricValue = targetAgent.diskUsage;
+        color = '#38bdf8';
+      } else if (widget.metricName === 'threat') {
+        metricValue = targetAgent.threatScore;
+        suffix = '/100';
+        color = metricValue > 70 ? 'var(--critical)' : metricValue > 40 ? 'var(--high)' : 'var(--low)';
+      } else if (widget.metricName === 'network') {
+        metricValue = Math.round(targetAgent.networkIn + targetAgent.networkOut);
+        suffix = ' Mbps';
+        color = '#10b981';
+      }
     }
 
     // Number Style Widget
     if (widget.widgetType === 'Number') {
       return (
         <div style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center' }}>
-          <div style={{ fontSize: '3rem', fontWeight: 700, color, textShadow: `0 0 15px ${color}1a` }}>
+          <div style={{ fontSize: metricValue === 'ALERTING' ? '2.2rem' : '3rem', fontWeight: 700, color, textShadow: `0 0 15px ${color}1a` }}>
             {metricValue}{suffix}
           </div>
           <div style={{ fontSize: '0.72rem', color: 'var(--text-3)', textTransform: 'uppercase', letterSpacing: '0.04em', marginTop: 4 }}>
-            Latest {widget.metricName?.toUpperCase()}
+            {isSystemMetric ? widget.title : `Latest ${widget.metricName?.toUpperCase()}`}
           </div>
         </div>
       );
@@ -1239,7 +1310,8 @@ function WidgetContent({ widget, agents, recentAlerts }: ContentProps) {
 
     // Gauge Style Widget
     if (widget.widgetType === 'Gauge') {
-      const needleRotation = -90 + (metricValue / 100) * 180;
+      let percent = typeof metricValue === 'number' ? metricValue : (metricValue === 'SAFE' ? 100 : 0);
+      const needleRotation = -90 + (percent / 100) * 180;
       return (
         <div style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', position: 'relative' }}>
           <svg width="130" height="75" viewBox="0 0 100 60" style={{ overflow: 'visible' }}>
@@ -1256,7 +1328,7 @@ function WidgetContent({ widget, agents, recentAlerts }: ContentProps) {
               strokeWidth="6" 
               strokeLinecap="round" 
               strokeDasharray="126" 
-              strokeDashoffset={126 - (metricValue / 100) * 126}
+              strokeDashoffset={126 - (percent / 100) * 126}
               style={{ transition: 'stroke-dashoffset 0.8s ease-out' }}
             />
             
