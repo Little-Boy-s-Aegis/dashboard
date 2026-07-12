@@ -8,6 +8,7 @@ import (
 	"net"
 	"net/http"
 	"net/netip"
+	"net/url"
 	"os"
 	"strings"
 	"time"
@@ -141,9 +142,34 @@ func IPBanMiddleware(next http.Handler) http.Handler {
 	})
 }
 
+func isSOCConsoleRequest(r *http.Request) bool {
+	if r == nil {
+		return false
+	}
+	host := strings.ToLower(r.Host)
+	if host == "soc.littleboys.biz" || strings.HasPrefix(host, "soc.") {
+		return true
+	}
+	if r.Header.Get("X-Aegis-Surface") == "soc-console" {
+		return true
+	}
+	if referer := r.Header.Get("Referer"); referer != "" {
+		if u, err := url.Parse(referer); err == nil {
+			refHost := strings.ToLower(u.Hostname())
+			if refHost == "soc.littleboys.biz" || strings.HasPrefix(refHost, "soc.") {
+				return true
+			}
+		}
+	}
+	return false
+}
+
 func shouldBypassSOCIPBan(r *http.Request) bool {
 	if r == nil || r.URL == nil {
 		return false
+	}
+	if isSOCConsoleRequest(r) {
+		return true
 	}
 	if r.URL.Path == "/api/internal/ip-ban/check" {
 		return false
@@ -231,6 +257,10 @@ func writeIPBannedResponse(w http.ResponseWriter, r *http.Request) {
 func HandleInternalIPBanCheck(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet && r.Method != http.MethodHead {
 		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
+	if isSOCConsoleRequest(r) {
+		w.WriteHeader(http.StatusNoContent)
 		return
 	}
 
