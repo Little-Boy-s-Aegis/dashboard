@@ -1507,9 +1507,10 @@ func autoBlockAllowed(dec *SoarDecisionPayload, info *ParsedSoarInfo, opts soarP
 		return false, "SOAR autoban skipped: threat is not independently confirmed."
 	}
 	if strings.ToLower(info.Severity) != "critical" && info.RiskScore < 9.0 {
-		if !(autopilotEnabled && isSQLi) {
-			return false, fmt.Sprintf("SOAR autoban skipped: critical severity or risk >= 9.0 required, got severity=%s risk=%.1f.", info.Severity, info.RiskScore)
+		if isSQLi {
+			return false, "SOAR autoban skipped: SQL injection is alert-only below critical severity threshold."
 		}
+		return false, fmt.Sprintf("SOAR autoban skipped: critical severity or risk >= 9.0 required, got severity=%s risk=%.1f.", info.Severity, info.RiskScore)
 	}
 	return true, ""
 }
@@ -1743,9 +1744,10 @@ func alertEligibleForAutoban(alert *models.Alert) (bool, string) {
 		return false, "resolved alerts are not eligible for autoban"
 	}
 	if strings.ToLower(alert.Severity) != "critical" {
-		if !(autopilotEnabled && isSQLi) {
-			return false, fmt.Sprintf("autoban requires critical severity; got %s", alert.Severity)
+		if isSQLi {
+			return false, "autoban skipped: SQL injection is alert-only below critical severity threshold."
 		}
+		return false, fmt.Sprintf("autoban requires critical severity; got %s", alert.Severity)
 	}
 	return true, ""
 }

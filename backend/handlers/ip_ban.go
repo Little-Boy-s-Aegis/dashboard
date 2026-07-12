@@ -120,7 +120,7 @@ func requestHasBannedIP(r *http.Request) (bool, string, error) {
 
 func IPBanMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Header.Get("X-Aegis-Surface") == "soc-console" {
+		if shouldBypassSOCIPBan(r) {
 			next.ServeHTTP(w, r)
 			return
 		}
@@ -139,6 +139,22 @@ func IPBanMiddleware(next http.Handler) http.Handler {
 		}
 		next.ServeHTTP(w, r)
 	})
+}
+
+func shouldBypassSOCIPBan(r *http.Request) bool {
+	if r == nil || r.URL == nil {
+		return false
+	}
+	if r.URL.Path == "/api/internal/ip-ban/check" {
+		return false
+	}
+	if r.Header.Get("X-Aegis-Surface") == "soc-console" {
+		return true
+	}
+	if strings.HasPrefix(r.URL.Path, "/api/") {
+		return !strings.EqualFold(os.Getenv("AEGIS_ENFORCE_SOC_IP_BAN"), "true")
+	}
+	return false
 }
 
 func revokeDashboardAuth(w http.ResponseWriter, r *http.Request) {

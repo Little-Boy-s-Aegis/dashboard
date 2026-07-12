@@ -1161,9 +1161,20 @@ func parseAddr(rawIP string) (netip.Addr, bool) {
 	return addr.Unmap(), true
 }
 
+var (
+	mockSettings   = map[string]string{"soc_autopilot_enabled": "true"}
+	mockSettingsMu sync.RWMutex
+)
+
 func GetSQLSetting(key string) (string, error) {
 	if !UsePostgres {
-		return "false", nil
+		mockSettingsMu.RLock()
+		defer mockSettingsMu.RUnlock()
+		val, ok := mockSettings[key]
+		if !ok {
+			return "false", nil
+		}
+		return val, nil
 	}
 	var val string
 	err := SQL.QueryRow("SELECT value FROM system_settings WHERE key = $1", key).Scan(&val)
@@ -1175,6 +1186,9 @@ func GetSQLSetting(key string) (string, error) {
 
 func SaveSQLSetting(key string, val string) error {
 	if !UsePostgres {
+		mockSettingsMu.Lock()
+		defer mockSettingsMu.Unlock()
+		mockSettings[key] = val
 		return nil
 	}
 	_, err := SQL.Exec(`

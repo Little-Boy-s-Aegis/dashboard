@@ -456,22 +456,30 @@ func TestSimulationAndActions(t *testing.T) {
 		}
 		authMu.Unlock()
 		banChecked := IPBanMiddleware(protected)
-		blockedReq := httptest.NewRequest("GET", "/api/summary", nil)
-		blockedReq.RemoteAddr = "198.51.100.222:45678"
-		blockedReq.AddCookie(&http.Cookie{Name: "session_token", Value: "blocked-session-token"})
-		blockedResp := httptest.NewRecorder()
-		banChecked.ServeHTTP(blockedResp, blockedReq)
-		if blockedResp.Code != http.StatusForbidden {
-			t.Errorf("Expected banned IP middleware status 403, got %d", blockedResp.Code)
-		}
-		if blockedResp.Header().Get("X-Aegis-IP-Banned") != "true" {
-			t.Error("Expected banned IP response marker header")
+		dashboardReq := httptest.NewRequest("GET", "/api/summary", nil)
+		dashboardReq.RemoteAddr = "198.51.100.222:45678"
+		dashboardReq.AddCookie(&http.Cookie{Name: "session_token", Value: "blocked-session-token"})
+		dashboardResp := httptest.NewRecorder()
+		banChecked.ServeHTTP(dashboardResp, dashboardReq)
+		if dashboardResp.Code != http.StatusOK {
+			t.Errorf("Expected SOC dashboard API to bypass IP ban with status 200, got %d", dashboardResp.Code)
 		}
 		authMu.RLock()
 		_, stillActive := sessionStore["blocked-session-token"]
 		authMu.RUnlock()
-		if stillActive {
-			t.Fatal("Expected banned IP middleware to revoke the active session")
+		if !stillActive {
+			t.Fatal("Expected SOC dashboard API bypass to keep the active session")
+		}
+
+		blockedReq := httptest.NewRequest("GET", "/api/internal/ip-ban/check", nil)
+		blockedReq.RemoteAddr = "198.51.100.222:45678"
+		blockedResp := httptest.NewRecorder()
+		banChecked.ServeHTTP(blockedResp, blockedReq)
+		if blockedResp.Code != http.StatusForbidden {
+			t.Errorf("Expected bank/internal IP ban check status 403, got %d", blockedResp.Code)
+		}
+		if blockedResp.Header().Get("X-Aegis-IP-Banned") != "true" {
+			t.Error("Expected banned IP response marker header")
 		}
 	})
 
