@@ -74,8 +74,47 @@ The frontend container compiles the Vite project into static assets and uses int
 
 ---
 
-## 🔒 SIEM Backend Hardening & Data Features
+## SIEM Backend Hardening and Data Features
 
 * **Dynamic Simulation & Seeding Controls**: Implemented dynamic seeding toggles in the Go API backend. Database auto-seeding and the threat activity simulator are now optional and controlled dynamically at runtime via the `AEGIS_SIMULATION_ENABLED` environment variable.
 * **Go Backend Log Sanitization**: Added a custom `LogSanitizerWriter` wrapper around backend logging outputs to intercept and sanitize security-sensitive event logs, preventing internal credential/token disclosure.
 * **Path Traversal & SOC Gateway Validation**: Integrated backend security validation tests ensuring API routing is secured against path traversal escapes and unauthorized SOAR gateway bypass actions.
+
+---
+
+## Tech Stack
+
+| Component | Version |
+|---|---|
+| Go | 1.26 |
+| Kafka-go | 0.4.51 (segmentio) |
+| PostgreSQL driver | lib/pq 1.12.3 |
+| AWS SDK | v2 (EC2, WAFv2) |
+| React | 19.2.7 |
+| Vite | 8.1.1 |
+| TypeScript | 6.0.2 |
+| Testing | Vitest 4.1.9, Testing Library |
+| Docker Backend | golang:alpine multi-stage |
+| Docker Frontend | node:20-alpine -> nginx:alpine |
+
+---
+
+## Deployment Info
+
+In the full ecosystem, the Go backend runs as `dashboard-backend` on port 8082 and the React frontend runs as `dashboard-frontend` on port 3001. Nginx routes `/api/` to the backend and `/soc/` to the frontend. See [aegis-bank-deployment](https://github.com/Little-Boy-s-Aegis/aegis-bank-deployment) for the full setup.
+
+---
+
+## Related Repositories
+
+| Repository | Description |
+|---|---|
+| [aegis-bank-deployment](https://github.com/Little-Boy-s-Aegis/aegis-bank-deployment) | Docker Compose orchestration |
+| [aegis-bank-backend](https://github.com/Little-Boy-s-Aegis/aegis-bank-backend) | Spring Boot banking API |
+| [aegis-bank-web-client](https://github.com/Little-Boy-s-Aegis/aegis-bank-web-client) | Next.js banking portal |
+| [aegis-bank-mobile-app](https://github.com/Little-Boy-s-Aegis/aegis-bank-mobile-app) | Flutter mobile app |
+| [agent-layer-1](https://github.com/Little-Boy-s-Aegis/agent-layer-1) | AI Sensor Agents |
+| [agent-layer-2](https://github.com/Little-Boy-s-Aegis/agent-layer-2) | Meta Analyzer / SOAR Orchestrator prompts |
+| [aegis-soar-engine](https://github.com/Little-Boy-s-Aegis/aegis-soar-engine) | SOAR Decision Engine |
+| [aegis-staging-sandbox](https://github.com/Little-Boy-s-Aegis/aegis-staging-sandbox) | Staging Sandbox |
+| [aegis-bank-terraform](https://github.com/Little-Boy-s-Aegis/aegis-bank-terraform) | Terraform IaC |
