@@ -1,120 +1,217 @@
-# Aegis SOC Dashboard - SIEM & AI Security Copilot
+# Aegis SOC Dashboard
 
-The Aegis Security Operations Center (SOC) Dashboard is a real-time SIEM platform. It ingests security logs and telemetry produced by the banking backend, evaluates alerts using an AI Security Copilot, tracks host File Integrity Monitoring (FIM), and simulates security attack scenarios.
+Security Operations Center application for Little Boy's Aegis. A Go API ingests
+and stores security events, coordinates analyst actions and SOAR decisions, and
+serves a React/Vite interface for alerts, agents, logs, FIM, response actions,
+metrics, and security simulations.
 
----
+## Capabilities
 
-## Architecture & Stack
-- **Go API Backend** (`dashboard/backend`): Uses Go Standard Library HTTP server, Segmentio Kafka-go reader, and PostgreSQL database with in-memory fallback.
-- **Vite React Frontend** (`dashboard/frontend`): Built with React 19, TypeScript, Vite, Lucide icons, and HSL-styled vanilla CSS.
+- Real-time Kafka security-event consumption
+- L0 log processing and enrichment for Layer 2
+- PostgreSQL persistence with an in-memory development fallback
+- OTP/session-based SOC operator authentication
+- Alert search, assignment, analysis, bulk operations, and resolution
+- Agent health and host resource visibility
+- File Integrity Monitoring and log workbench views
+- Response-center action execution and audit history
+- Internal SOAR decision intake and automatic ban coordination
+- Optional AWS WAF and network ACL synchronization
+- Runtime simulation and seeding controls
+- React dashboards for overview, agents, alerts, FIM, logs, SOAR performance,
+  CloudWatch, response actions, and orchestrator interaction
 
----
+## Architecture
 
-## Running the Dashboard (Direct / Host Mode)
-
-To run the SOC dashboard locally, you must run the Go backend and React frontend concurrently:
-
-### 1. Start the Go Backend API
-Navigate to the `backend` folder, fetch dependencies, and run:
-```bash
-cd dashboard/backend
-go mod download
-go run main.go
+```text
+Kafka / bank API / SOAR
+          |
+          v
+Go backend :8082
+  |-- consumer + log processor
+  |-- auth / alert / action handlers
+  |-- PostgreSQL or in-memory store
+  `-- AWS WAF / NACL integrations
+          ^
+          | /api
+React + Vite :3001 (base path /soc/)
 ```
-- The SOC API server will start listening on **`http://localhost:8082`**.
-- It automatically tries to connect to PostgreSQL. If PostgreSQL is offline, it gracefully falls back to **In-Memory database mode** so you can still explore the application.
-- If `KAFKA_BOOTSTRAP_SERVERS` is set, it will read security logs from Kafka. Without that variable, Kafka ingestion is disabled and the backend still polls the bank security-log API.
 
-### 2. Start the React Frontend Dev Server
-In a separate terminal window:
+The backend uses the Go standard-library HTTP server and `kafka-go`. The
+frontend is a separate React 19 single-page application served under `/soc/`.
+In the full stack, Nginx routes `/api/` to Go and `/soc/` to the frontend.
+
+## Prerequisites
+
+- Go version declared in `backend/go.mod`
+- Node.js 20+ and npm
+- Optional PostgreSQL 16; the backend falls back to in-memory state when it
+  cannot connect
+- Optional Kafka for live ingestion
+
+## Local Development
+
+### Start the backend
+
 ```bash
-cd dashboard/frontend
-npm install
+cd backend
+go mod download
+go run .
+```
+
+The API listens on <http://localhost:8082> by default. Verify it with:
+
+```bash
+curl http://localhost:8082/health
+```
+
+If PostgreSQL is unavailable, startup logs explicitly report in-memory mode.
+That mode is suitable for UI development but loses state on restart.
+
+### Start the frontend
+
+In a second terminal:
+
+```bash
+cd frontend
+npm ci
 npm run dev
 ```
-- Open **`http://localhost:3001`** in your browser.
-- The Vite server is configured to proxy all `/api` requests to the Go backend on `http://localhost:8082`.
 
----
+Open <http://localhost:3001/soc/>. Vite proxies `/api` to
+`http://localhost:8082` during development.
 
-## Environment Variables (Go Backend)
-Set these variables in your terminal to override default parameters:
-- `DATABASE_URL`: Postgres DSN connection string (e.g. `postgres://postgres:1@localhost:5432/aegis?sslmode=disable`).
-- `KAFKA_BOOTSTRAP_SERVERS`: Optional Kafka broker addresses for realtime security-event and L2 clean-log ingestion (e.g. `localhost:9094`).
+## Backend Configuration
 
----
+| Variable | Default / behavior | Purpose |
+|---|---|---|
+| `PORT` | `8082` | API listener |
+| `DATABASE_URL` | local PostgreSQL DSN | Complete Postgres connection string |
+| `DB_HOST`, `DB_PORT`, `DB_USER`, `DB_PASSWORD`, `DB_NAME` | optional | Component-form database configuration |
+| `KAFKA_BOOTSTRAP_SERVERS` | empty disables consumer paths | Kafka brokers |
+| `FRONTEND_URL` | `http://localhost:5173` fallback | Allowed/default CORS origin |
+| `AEGIS_INTERNAL_TOKEN` | empty | Internal dashboard, SOAR, and bank service authentication |
+| `BANK_BACKEND_URL` | handler-specific local default | Spring Boot bank API |
+| `AEGIS_COOKIE_SECURE` | automatic/override | Force secure session cookies |
+| `AEGIS_SIMULATION_ENABLED` | `false` | Enable demo seeding/simulation |
+| `AEGIS_AGENT_THREAT_WINDOW_MINUTES` | implementation default | Agent threat activity window |
+| `AEGIS_ENFORCE_SOC_IP_BAN` | disabled unless enabled | Enforce SOC-side IP bans |
+| `AWS_REGION` | AWS SDK default | WAF/NACL region |
+| `AWS_WAF_IP_SET_NAME`, `AWS_WAF_IP_SET_ID` | optional | Regional WAF synchronization |
+| `AWS_WAF_CLOUDFRONT_IP_SET_NAME`, `AWS_WAF_CLOUDFRONT_IP_SET_ID` | optional | CloudFront WAF synchronization |
+| `AWS_NETWORK_ACL_ID` | optional | Network ACL synchronization |
 
-## Containerized Deployment (Docker)
+Prefer `DATABASE_URL` over the component variables. Keep internal tokens and
+database credentials out of the repository and shell history.
 
-To run the dashboard services as isolated Docker containers:
+## API Overview
 
-### 1. Build & Run Go Backend
+| Area | Endpoints |
+|---|---|
+| Health | `GET /health` |
+| Authentication | `/api/auth/request-token`, `/login`, `/logout`, `/check` |
+| Operators | `GET /api/operators` |
+| Overview | `GET /api/summary` |
+| Agents | `GET /api/agents`, `GET /api/agents/{id}` |
+| Alerts | list/detail, analyze, save analysis, assign, resolve, bulk operations, orchestrated ban |
+| Telemetry | `GET /api/logs`, `GET /api/fim` |
+| Response | `GET/POST /api/actions`, `GET /api/banned-ips` |
+| SOAR | `GET /api/soar/metrics`, `POST /api/internal/soar/decision` |
+| Internal services | IP-ban check and latest-OTP endpoints |
+| Settings | `GET/POST /api/settings` |
+| Demo | `POST /api/simulate` when enabled |
+
+Most routes pass through authentication and IP-ban middleware. Internal routes
+require the synchronized Aegis token; do not expose them directly to the public
+internet.
+
+## Tests and Quality Checks
+
+Backend:
+
 ```bash
-# From the 'dashboard' root directory
-docker build -t aegis-dashboard-backend .
+cd backend
+go test ./...
+go vet ./...
+```
 
-# Run container
-docker run -d -p 8082:8082 \
-  -e DATABASE_URL=postgres://postgres:1@host.docker.internal:5432/aegis \
-  -e KAFKA_BOOTSTRAP_SERVERS=host.docker.internal:9094 \
-  --name aegis-soc-backend-service \
+Frontend:
+
+```bash
+cd frontend
+npm run lint
+npm test
+npm run build
+```
+
+Repository-level Python scripts exercise login-attack and path-traversal
+scenarios against a running API:
+
+```bash
+python3 test_login_attack.py
+python3 test_path_traversal.py
+```
+
+Confirm their target URLs and run them only against an authorized local or
+staging environment.
+
+## Docker
+
+Build the API from the repository root:
+
+```bash
+docker build -t aegis-dashboard-backend .
+docker run --rm -p 8082:8082 \
+  -e DATABASE_URL='postgres://postgres:<password>@host.docker.internal:5432/aegis?sslmode=disable' \
   aegis-dashboard-backend
 ```
 
-### 2. Build & Run React/Vite Frontend
+Build the frontend from `frontend/`:
+
 ```bash
-# From the 'dashboard/frontend' directory
 cd frontend
 docker build -t aegis-dashboard-frontend .
-
-# Run container
-docker run -d -p 3001:3001 --name aegis-soc-frontend-service aegis-dashboard-frontend
+docker run --rm -p 3001:3001 aegis-dashboard-frontend
 ```
-The frontend container compiles the Vite project into static assets and uses internal Nginx to serve them on port `3001` under the `/soc/` path.
 
----
+The frontend image serves static assets at `/soc/`. Its Nginx configuration
+does not proxy `/api`, so use the full Aegis gateway for an integrated
+containerized deployment or add an external reverse proxy.
 
-## SIEM Backend Hardening and Data Features
+## Repository Layout
 
-* **Dynamic Simulation & Seeding Controls**: Implemented dynamic seeding toggles in the Go API backend. Database auto-seeding and the threat activity simulator are now optional and controlled dynamically at runtime via the `AEGIS_SIMULATION_ENABLED` environment variable.
-* **Go Backend Log Sanitization**: Added a custom `LogSanitizerWriter` wrapper around backend logging outputs to intercept and sanitize security-sensitive event logs, preventing internal credential/token disclosure.
-* **Path Traversal & SOC Gateway Validation**: Integrated backend security validation tests ensuring API routing is secured against path traversal escapes and unauthorized SOAR gateway bypass actions.
+```text
+backend/
+├── consumer/       # Kafka ingestion
+├── handlers/       # Auth, alert, SOAR, ban, WAF, and NACL HTTP logic
+├── models/         # API and persistence structures
+├── processor/      # L0 log enrichment/routing
+├── store/          # PostgreSQL migrations and in-memory implementation
+└── main.go         # Routes and middleware
+frontend/
+├── src/components/ # SOC views and tests
+├── src/App.tsx     # Application shell/navigation
+├── vite.config.ts  # /soc base path and dev proxy
+└── Dockerfile      # Static Nginx image
+Dockerfile          # Go backend image
+```
 
----
+## Security and Operations
 
-## Tech Stack
-
-| Component | Version |
-|---|---|
-| Go | 1.26 |
-| Kafka-go | 0.4.51 (segmentio) |
-| PostgreSQL driver | lib/pq 1.12.3 |
-| AWS SDK | v2 (EC2, WAFv2) |
-| React | 19.2.7 |
-| Vite | 8.1.1 |
-| TypeScript | 6.0.2 |
-| Testing | Vitest 4.1.9, Testing Library |
-| Docker Backend | golang:alpine multi-stage |
-| Docker Frontend | node:20-alpine -> nginx:alpine |
-
----
-
-## Deployment Info
-
-In the full ecosystem, the Go backend runs as `dashboard-backend` on port 8082 and the React frontend runs as `dashboard-frontend` on port 3001. Nginx routes `/api/` to the backend and `/soc/` to the frontend. See [aegis-bank-deployment](https://github.com/Little-Boy-s-Aegis/aegis-bank-deployment) for the full setup.
-
----
+- Disable `AEGIS_SIMULATION_ENABLED` in shared environments.
+- Terminate TLS at the gateway and set secure-cookie behavior appropriately.
+- Restrict internal endpoints and AWS permissions to the dashboard service
+  identity.
+- The backend sanitizes common secret terms and active tokens in logs, but logs
+  should still be treated as sensitive.
+- In-memory mode is intentionally permissive for development; use PostgreSQL
+  for durable audit and operator state.
+- WAF/NACL updates can change traffic flow. Test rollback and scope before
+  enabling synchronization.
 
 ## Related Repositories
 
-| Repository | Description |
-|---|---|
-| [aegis-bank-deployment](https://github.com/Little-Boy-s-Aegis/aegis-bank-deployment) | Docker Compose orchestration |
-| [aegis-bank-backend](https://github.com/Little-Boy-s-Aegis/aegis-bank-backend) | Spring Boot banking API |
-| [aegis-bank-web-client](https://github.com/Little-Boy-s-Aegis/aegis-bank-web-client) | Next.js banking portal |
-| [aegis-bank-mobile-app](https://github.com/Little-Boy-s-Aegis/aegis-bank-mobile-app) | Flutter mobile app |
-| [agent-layer-1](https://github.com/Little-Boy-s-Aegis/agent-layer-1) | AI Sensor Agents |
-| [agent-layer-2](https://github.com/Little-Boy-s-Aegis/agent-layer-2) | Meta Analyzer / SOAR Orchestrator prompts |
-| [aegis-soar-engine](https://github.com/Little-Boy-s-Aegis/aegis-soar-engine) | SOAR Decision Engine |
-| [aegis-staging-sandbox](https://github.com/Little-Boy-s-Aegis/aegis-staging-sandbox) | Staging Sandbox |
-| [aegis-bank-terraform](https://github.com/Little-Boy-s-Aegis/aegis-bank-terraform) | Terraform IaC |
+- [`aegis-bank-backend`](https://github.com/Little-Boy-s-Aegis/aegis-bank-backend) — source application and telemetry producer
+- [`aegis-soar-engine`](https://github.com/Little-Boy-s-Aegis/aegis-soar-engine) — Layer 2 decisions and actions
+- [`aegis-bank-deployment`](https://github.com/Little-Boy-s-Aegis/aegis-bank-deployment) — gateway and full stack
+- [`aegis-bank-terraform`](https://github.com/Little-Boy-s-Aegis/aegis-bank-terraform) — AWS infrastructure
