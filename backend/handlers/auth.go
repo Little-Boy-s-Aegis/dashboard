@@ -479,8 +479,8 @@ func Login(w http.ResponseWriter, r *http.Request) {
 			delete(otpStore, k)
 		}
 	}
-	delete(lockoutStore, lockKey) // reset lockout counter
-	_ = os.Remove("otp.txt")      // Delete OTP retrieval file after successful consumption
+	delete(lockoutStore, lockKey)                         // reset lockout counter
+	_ = os.Remove(filepath.Join(os.TempDir(), "otp.txt")) // Delete OTP retrieval file after successful consumption
 
 	// Mapped Username
 	var username string
@@ -844,7 +844,7 @@ func GetOperators(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Access-Control-Allow-Credentials", "true")
 	w.Header().Set("Access-Control-Allow-Methods", "GET, OPTIONS")
 	w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization")
-	
+
 	if r.Method == http.MethodOptions {
 		w.WriteHeader(http.StatusOK)
 		return
