@@ -16,6 +16,12 @@ backend/main.exe
 *.test
 *.prof
 
+# Runtime and generated Python artifacts
+__pycache__/
+*.pyc
+*.log
+backend/otp.txt
+
 # OS & IDE directories
 .idea/
 .vscode/
