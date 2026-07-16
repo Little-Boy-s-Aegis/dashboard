@@ -1,5 +1,10 @@
 # Aegis SOC Dashboard
 
+[![Git Clones](https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/Little-Boy-s-Aegis/aegis-bank-deployment/main/clone-badge.json)](https://github.com/Little-Boy-s-Aegis/aegis-bank-deployment)
+[![Unique Cloners](https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/Little-Boy-s-Aegis/aegis-bank-deployment/main/uniques-badge.json)](https://github.com/Little-Boy-s-Aegis/aegis-bank-deployment)
+[![Release Downloads](https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/Little-Boy-s-Aegis/aegis-bank-deployment/main/downloads-badge.json)](https://github.com/Little-Boy-s-Aegis/aegis-bank-deployment/releases)
+[![Stars](https://img.shields.io/github/stars/Little-Boy-s-Aegis/dashboard?style=flat&color=F59E0B&logo=github&label=stars)](https://github.com/Little-Boy-s-Aegis/dashboard/stargazers)
+
 Security Operations Center application for Little Boy's Aegis. A Go API ingests
 and stores security events, coordinates analyst actions and SOAR decisions, and
 serves a React/Vite interface for alerts, agents, logs, FIM, response actions,
