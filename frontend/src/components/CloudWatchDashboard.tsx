@@ -191,6 +191,7 @@ export default function CloudWatchDashboard({ agents, recentAlerts }: Props) {
   const [ghostCoords, setGhostCoords] = useState<{ x: number; y: number; w: number; h: number } | null>(null);
 
   const [isConfigModalOpen, setIsConfigModalOpen] = useState(false);
+  const [isMetadataModalOpen, setIsMetadataModalOpen] = useState(false);
   const [editingWidgetId, setEditingWidgetId] = useState<string | null>(null);
 
   // Form states for modal
@@ -525,7 +526,7 @@ export default function CloudWatchDashboard({ agents, recentAlerts }: Props) {
                 <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, zIndex: 90 }} onClick={() => setIsDropdownOpen(false)} />
                 <div className="glass-panel" style={{ position: 'absolute', right: 0, top: 34, width: 180, zIndex: 100, padding: 6, display: 'flex', flexDirection: 'column', gap: 4 }}>
                   <button 
-                    onClick={() => { alert(`Aegis Dashboard Metadata: Hosts = ${agents.length}, Active Alerts = ${recentAlerts.filter(a => a.status !== 'resolved').length}`); setIsDropdownOpen(false); }} 
+                    onClick={() => { setIsMetadataModalOpen(true); setIsDropdownOpen(false); }} 
                     style={{ background: 'transparent', border: 'none', color: 'var(--text-1)', fontSize: '0.78rem', padding: '6px 8px', textAlign: 'left', cursor: 'pointer', borderRadius: 4, width: '100%' }}
                     className="hover-card"
                   >
@@ -1022,6 +1023,83 @@ export default function CloudWatchDashboard({ agents, recentAlerts }: Props) {
         </div>
       )}
 
+      {/* Real-time Dashboard Metadata Modal */}
+      {isMetadataModalOpen && (
+        <div style={{
+          position: 'fixed', top: 0, left: 0, right: 0, bottom: 0,
+          background: 'rgba(0,0,0,0.65)', backdropFilter: 'blur(4px)',
+          display: 'flex', alignItems: 'center', justifyContent: 'center',
+          zIndex: 1000, padding: 16
+        }}>
+          <div 
+            className="glass-panel" 
+            style={{
+              width: '100%', maxWidth: 540,
+              display: 'flex', flexDirection: 'column', 
+              boxShadow: '0 24px 64px rgba(0,0,0,0.4)', borderColor: 'rgba(255, 255, 255, 0.08)'
+            }}
+          >
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '16px 20px', borderBottom: '1px solid var(--border-1)' }}>
+              <h2 style={{ fontSize: '1rem', margin: 0, fontWeight: 600, display: 'flex', alignItems: 'center', gap: 8 }}>
+                <Layout size={16} style={{ color: '#ff9900' }} /> Aegis SOC Dashboard Metadata
+              </h2>
+              <button onClick={() => setIsMetadataModalOpen(false)} style={{ background: 'transparent', border: 'none', color: 'var(--text-3)', cursor: 'pointer' }}>
+                <X size={16} />
+              </button>
+            </div>
+
+            <div style={{ padding: 20, display: 'flex', flexDirection: 'column', gap: 12, fontSize: '0.8rem' }}>
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
+                <div style={{ padding: 12, background: 'var(--bg-surface)', border: '1px solid var(--border-1)', borderRadius: 6 }}>
+                  <span style={{ fontSize: '0.68rem', color: 'var(--text-3)', display: 'block' }}>TOTAL MONITORED HOSTS</span>
+                  <strong style={{ fontSize: '1.2rem', color: 'var(--accent)' }}>{agents.length} Hosts</strong>
+                </div>
+                <div style={{ padding: 12, background: 'var(--bg-surface)', border: '1px solid var(--border-1)', borderRadius: 6 }}>
+                  <span style={{ fontSize: '0.68rem', color: 'var(--text-3)', display: 'block' }}>ACTIVE INCIDENT ALARMS</span>
+                  <strong style={{ fontSize: '1.2rem', color: recentAlerts.filter(a => a.status !== 'resolved').length > 0 ? 'var(--critical)' : 'var(--low)' }}>
+                    {recentAlerts.filter(a => a.status !== 'resolved').length} Open
+                  </strong>
+                </div>
+              </div>
+
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 6, background: 'rgba(0,0,0,0.15)', padding: 12, borderRadius: 6, border: '1px solid var(--border-0)' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                  <span style={{ color: 'var(--text-3)' }}>Critical Severity:</span>
+                  <span style={{ fontWeight: 600, color: 'var(--critical)' }}>{recentAlerts.filter(a => a.severity === 'critical' && a.status !== 'resolved').length}</span>
+                </div>
+                <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                  <span style={{ color: 'var(--text-3)' }}>High Severity:</span>
+                  <span style={{ fontWeight: 600, color: 'var(--high)' }}>{recentAlerts.filter(a => a.severity === 'high' && a.status !== 'resolved').length}</span>
+                </div>
+                <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                  <span style={{ color: 'var(--text-3)' }}>Medium Severity:</span>
+                  <span style={{ fontWeight: 600, color: 'var(--medium)' }}>{recentAlerts.filter(a => a.severity === 'medium' && a.status !== 'resolved').length}</span>
+                </div>
+                <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                  <span style={{ color: 'var(--text-3)' }}>Low Severity:</span>
+                  <span style={{ fontWeight: 600, color: 'var(--low)' }}>{recentAlerts.filter(a => a.severity === 'low' && a.status !== 'resolved').length}</span>
+                </div>
+                <div style={{ display: 'flex', justifyContent: 'space-between', borderTop: '1px solid var(--border-0)', paddingTop: 6, marginTop: 2 }}>
+                  <span style={{ color: 'var(--text-3)' }}>MITRE Techniques Covered:</span>
+                  <span style={{ fontWeight: 600, color: 'var(--purple)' }}>{new Set(recentAlerts.map(a => a.mitreTechnique).filter(Boolean)).size}</span>
+                </div>
+              </div>
+
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: '0.72rem', color: 'var(--text-3)', fontFamily: "'IBM Plex Mono', monospace" }}>
+                <span>Telemetry Ingestion: Live WebSocket / SWR</span>
+                <span style={{ color: 'var(--low)', fontWeight: 600 }}>● Active</span>
+              </div>
+            </div>
+
+            <div style={{ padding: '12px 20px', borderTop: '1px solid var(--border-1)', display: 'flex', justifyContent: 'flex-end', background: 'rgba(0,0,0,0.1)' }}>
+              <button className="btn btn-outline" onClick={() => setIsMetadataModalOpen(false)} style={{ fontSize: '0.8rem' }}>
+                Close
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
     </div>
   );
 }
@@ -1076,17 +1154,20 @@ function WidgetContent({ widget, agents, recentAlerts }: ContentProps) {
         return;
       }
 
-      // Generate 12 historical points ending in the current value
-      const history: number[] = [];
-      for (let i = 0; i < 12; i++) {
-        // slightly randomize previous values (only for numeric indicators, not binary status)
-        const variance = widget.metricName === 'system_status' ? 0 : (Math.random() - 0.5) * (currentVal * 0.15);
-        history.push(Math.max(0, Math.round(currentVal + variance)));
-      }
-      history[history.length - 1] = currentVal; // ensure last element is exact current value
-      setMetricHistory(history);
+      setMetricHistory(prev => {
+        if (prev.length === 0) {
+          // Initialize history buffer with current real value across initial window
+          return Array(12).fill(Math.round(currentVal));
+        }
+        // Append the latest real-time metric sample and maintain a 12-point sliding window
+        const nextHistory = [...prev, Math.round(currentVal)];
+        if (nextHistory.length > 12) {
+          return nextHistory.slice(nextHistory.length - 12);
+        }
+        return nextHistory;
+      });
     }
-  }, [widget.agentId, widget.metricName, agents, recentAlerts]);
+  }, [widget.agentId, widget.metricName, targetAgent?.cpuUsage, targetAgent?.ramUsage, targetAgent?.diskUsage, targetAgent?.threatScore, targetAgent?.networkIn, targetAgent?.networkOut, agents, recentAlerts]);
 
   // Fetch real-time log data if type is Logs
   useEffect(() => {

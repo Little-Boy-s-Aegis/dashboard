@@ -93,162 +93,8 @@ export default function OrchestratorChat({ agents }: Props) {
         icon = <Key size={16} />;
       }
 
-      // 1. Build customized baseline conversation logs using correct Agent IP and OS
-      const baselineMessages: ChatMessage[] = [];
-      const threeDaysAgo = new Date(Date.now() - 3 * 24 * 3600 * 1000);
-      const twoDaysAgo = new Date(Date.now() - 2 * 24 * 3600 * 1000);
-
-      if (nameLower.includes('web')) {
-        baselineMessages.push(
-          {
-            id: `${agent.id}-base-1`,
-            sender: 'agent',
-            senderName: agent.name,
-            timestamp: new Date(threeDaysAgo.getTime() + 15 * 60000).toISOString(),
-            message: 'SECURITY ALERT: Nginx detected high frequency of SQL injection payloads hitting API endpoint /v1/auth/login.',
-            details: JSON.stringify({
-              log_source: "nginx-access-logger",
-              event_type: "signature_match",
-              signature_name: "OWASP_TOP_10_SQL_INJECTION",
-              http_request: {
-                method: "POST",
-                path: "/v1/auth/login",
-                user_agent: "Mozilla/5.0 (Hydra-Scanner/v9.2)",
-                client_ip: agent.ip || "192.168.10.11",
-                payload: "admin' OR '1'='1'--",
-                payload_hex: "61646d696e27204f52202731273d2731272d2d"
-              },
-              alert_count_1m: 145,
-              severity_score: 8.5
-            }, null, 2)
-          },
-          {
-            id: `${agent.id}-base-2`,
-            sender: 'orchestrator',
-            senderName: 'L2 SOAR Orchestrator (AI Triage)',
-            timestamp: new Date(threeDaysAgo.getTime() + 16 * 60000).toISOString(),
-            message: `AI Assessment: Threat verified. Attacker IP is conducting active exploitation scanner against ${agent.name}. Autopilot rule triggered: Containment Active.`,
-            details: JSON.stringify({
-              ai_triage: {
-                model: "Aegis-L2-Triage-Sonnet",
-                confidence_score: 0.99,
-                triage_summary: `Confirmed malicious SQL injection scanner targeting ${agent.name}.`,
-                incident_risk_level: "High",
-                recommended_action: "Immediate Ingress Block at WAF / Edge Router"
-              }
-            }, null, 2),
-            actionExecuted: {
-              type: "AWS WAF Block IP",
-              target: "149.88.23.87/32",
-              status: "success",
-              message: "Successfully synchronized SOAR network ACL IP block. WAF rule 2017 applied to CloudFront WebACL.",
-              payload: JSON.stringify({
-                waf_action: "Block",
-                ip_set_id: "aegis-blocked-ips-ipset",
-                ip_range: "149.88.23.87/32",
-                arn: "arn:aws:wafv2:ap-southeast-1:080641082881:regional/ipset/aegis-blocked-ips/6844f0fb"
-              }, null, 2)
-            }
-          }
-        );
-      } else if (nameLower.includes('db') || nameLower.includes('replica')) {
-        baselineMessages.push(
-          {
-            id: `${agent.id}-base-1`,
-            sender: 'agent',
-            senderName: agent.name,
-            timestamp: new Date(twoDaysAgo.getTime() + 17 * 60000).toISOString(),
-            message: 'INTEGRITY REPORT: Syscheck detected unauthorized file modification in system configuration directories.',
-            details: JSON.stringify({
-              audit_type: "file_integrity_monitoring",
-              file_modified: "/etc/postgresql/15/main/pg_hba.conf",
-              modification_details: {
-                event: "modify",
-                user: "postgres",
-                process: "/usr/lib/postgresql/15/bin/postgres",
-                md5_old: "f9b88ef25b88cdeee21115",
-                md5_new: "3499fa1b5ef999bb3cdeee",
-                permission_diff: "-rw-r--r-- -> -rwxrwxrwx"
-              }
-            }, null, 2)
-          },
-          {
-            id: `${agent.id}-base-2`,
-            sender: 'orchestrator',
-            senderName: 'L2 SOAR Orchestrator (AI Triage)',
-            timestamp: new Date(twoDaysAgo.getTime() + 18 * 60000).toISOString(),
-            message: `AI Assessment: Severity High. Modification to database host files allows broad network access to secure database on ${agent.name}. Autopilot rule triggered: Revert Configuration and Isolate Host.`,
-            details: JSON.stringify({
-              ai_triage: {
-                model: "Aegis-L2-Triage-Sonnet",
-                confidence_score: 0.94,
-                triage_summary: "pg_hba.conf connection access expanded. Potential database hijack attempt."
-              }
-            }, null, 2),
-            actionExecuted: {
-              type: "AWS Security Group quarantine",
-              target: agent.ip,
-              status: "success",
-              message: `Successfully attached isolation security group sg-0dbdb0998 to EC2 Instance. Denied access except for SOC.`,
-              payload: JSON.stringify({
-                target_instance_id: "i-099abccde121ff89f",
-                action: "ReplaceSecurityGroups",
-                old_groups: ["sg-default-db"],
-                new_groups: ["sg-aegis-quarantine-soc"]
-              }, null, 2)
-            }
-          },
-          {
-            id: `${agent.id}-base-3`,
-            sender: 'agent',
-            senderName: agent.name,
-            timestamp: new Date(twoDaysAgo.getTime() + 19 * 60000).toISOString(),
-            message: 'INTEGRITY SYNC: Reverted /etc/postgresql/15/main/pg_hba.conf to default config from configuration master. Postgres restarted successfully.',
-            details: JSON.stringify({
-              reversion_status: "Successful",
-              md5_current: "f9b88ef25b88cdeee21115"
-            }, null, 2)
-          }
-        );
-      } else {
-        baselineMessages.push(
-          {
-            id: `${agent.id}-base-1`,
-            sender: 'agent',
-            senderName: agent.name,
-            timestamp: new Date(twoDaysAgo.getTime() + 20 * 60000).toISOString(),
-            message: 'SECURITY ALERT: Multiple SSH login failures detected on root account from external address 104.28.163.100.',
-            details: JSON.stringify({
-              log_source: "pam_secure_logger",
-              event_type: "auth_failure",
-              user_targeted: "root",
-              attempts_count_5s: 38,
-              client_ip: "104.28.163.100"
-            }, null, 2)
-          },
-          {
-            id: `${agent.id}-base-2`,
-            sender: 'orchestrator',
-            senderName: 'L2 SOAR Orchestrator (AI Triage)',
-            timestamp: new Date(twoDaysAgo.getTime() + 21 * 60000).toISOString(),
-            message: `AI Assessment: Severity Medium. Active brute-force attack targeting gateway ssh services on ${agent.name}. Autopilot containment initiated: Add IP to SOAR Blocklist.`,
-            details: JSON.stringify({
-              ai_triage: {
-                model: "Aegis-L2-Triage-Sonnet",
-                confidence_score: 0.88
-              }
-            }, null, 2),
-            actionExecuted: {
-              type: "Host iptables IP ban",
-              target: "104.28.163.100",
-              status: "success",
-              message: "Successfully synchronized local iptables blocklist. Added drop rule for 104.28.163.100."
-            }
-          }
-        );
-      }
-
-      // 2. Fetch and format live alerts from PostgreSQL matching this specific agent (forgiving regex-like search)
+      // 1. Build dynamic real-time conversation logs using live backend alerts & telemetry
+      const realMsgList: ChatMessage[] = [];
       const agentNameLower = agent.name.toLowerCase();
       const matchedAlerts = realAlerts.filter(a => {
         const aAgentName = a.agentName ? a.agentName.toLowerCase() : '';
@@ -267,7 +113,6 @@ export default function OrchestratorChat({ agents }: Props) {
         );
       });
 
-      const realMsgList: ChatMessage[] = [];
       matchedAlerts.forEach((alert) => {
         const alertTime = new Date(alert.timestamp).toISOString();
         const alertMsgId = `real-alert-${alert.id}`;
@@ -354,8 +199,29 @@ export default function OrchestratorChat({ agents }: Props) {
         }
       });
 
-      // Combine all messages and sort them chronologically by timestamp
-      const allMessages = [...baselineMessages, ...realMsgList, ...(customMessages[agent.id] || [])];
+      // If there are no real alerts recorded yet for this agent, push an initial live active telemetry status message
+      if (realMsgList.length === 0) {
+        realMsgList.push({
+          id: `${agent.id}-live-init`,
+          sender: 'agent',
+          senderName: agent.name,
+          timestamp: new Date(agent.lastSeen || Date.now()).toISOString(),
+          message: `TELEMETRY AGENT ACTIVE: Endpoint ${agent.name} (${agent.ip}) connected. Monitored telemetry stream active.`,
+          details: JSON.stringify({
+            agent_status: agent.status,
+            host_name: agent.name,
+            ip_address: agent.ip,
+            os_distribution: agent.os,
+            cpu_utilization: `${agent.cpuUsage.toFixed(1)}%`,
+            ram_utilization: `${agent.ramUsage.toFixed(1)}%`,
+            threat_score: agent.threatScore,
+            stream_status: "CONNECTED_HEALTHY"
+          }, null, 2)
+        });
+      }
+
+      // Combine all real messages and sort them chronologically by timestamp
+      const allMessages = [...realMsgList, ...(customMessages[agent.id] || [])];
       allMessages.sort((a, b) => {
         const timeA = new Date(a.timestamp).getTime();
         const timeB = new Date(b.timestamp).getTime();

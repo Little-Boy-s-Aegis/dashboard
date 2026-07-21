@@ -48,8 +48,9 @@ export default function AgentManager({ agents }: Props) {
   );
 
   const agentHostname = detail?.agent?.name || 'TARGET_HOST';
-  const linuxCmd = `curl -so wazuh-agent.deb https://packages.wazuh.com/4.x/apt/pool/main/w/wazuh-agent/wazuh-agent_latest_amd64.deb && WAZUH_MANAGER="wazuh.internal.aegis.com" WAZUH_AGENT_NAME="${agentHostname}" dpkg -i wazuh-agent.deb && systemctl enable --now wazuh-agent`;
-  const winCmd = `Invoke-WebRequest -Uri "https://packages.wazuh.com/4.x/windows/wazuh-agent-latest.msi" -OutFile "wazuh-agent.msi"; msiexec /i wazuh-agent.msi /q WAZUH_MANAGER="wazuh.internal.aegis.com" WAZUH_AGENT_NAME="${agentHostname}"; Start-Service Wazuh`;
+  const managerHost = typeof window !== 'undefined' && window.location.hostname ? window.location.hostname : 'wazuh.internal.aegis.com';
+  const linuxCmd = `curl -so wazuh-agent.deb https://packages.wazuh.com/4.x/apt/pool/main/w/wazuh-agent/wazuh-agent_latest_amd64.deb && WAZUH_MANAGER="${managerHost}" WAZUH_AGENT_NAME="${agentHostname}" dpkg -i wazuh-agent.deb && systemctl enable --now wazuh-agent`;
+  const winCmd = `Invoke-WebRequest -Uri "https://packages.wazuh.com/4.x/windows/wazuh-agent-latest.msi" -OutFile "wazuh-agent.msi"; msiexec /i wazuh-agent.msi /q WAZUH_MANAGER="${managerHost}" WAZUH_AGENT_NAME="${agentHostname}"; Start-Service Wazuh`;
 
   const tabItems = [
     { key: 'alerts', label: `Alerts (${detail?.alerts.filter(a => a.status !== 'resolved').length || 0})` },

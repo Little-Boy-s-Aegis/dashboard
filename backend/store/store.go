@@ -131,6 +131,7 @@ func init() {
 
 	// Seed default agents for inventory tracking
 	DB.dbDefaultAgents()
+	DB.seedFIMEvents()
 
 	if os.Getenv("AEGIS_SIMULATION_ENABLED") == "true" {
 		log.Printf("[SIMULATOR] Simulation mode enabled. Seeding mock history & starting background simulator...")
@@ -230,6 +231,30 @@ func (db *Database) dbDefaultAgents() {
 	for i := range agentsData {
 		agentsData[i].LastSeen = time.Now()
 		db.Agents[agentsData[i].ID] = &agentsData[i]
+	}
+}
+
+func (db *Database) seedFIMEvents() {
+	db.Mu.Lock()
+	defer db.Mu.Unlock()
+	if len(db.FIMEvents) > 0 {
+		return
+	}
+	now := time.Now()
+	fimSeeds := []*models.FIMEvent{
+		{ID: "fim-0001", Timestamp: now.Add(-45 * time.Minute), AgentID: "agent-01", AgentName: "Web-Prod-01", FilePath: "/etc/nginx/nginx.conf", EventType: "modify", Size: 4096, MD5: "8f683457a123b098f6bcd4621d373cad", SHA256: "9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08", User: "root", Process: "nginx"},
+		{ID: "fim-0002", Timestamp: now.Add(-30 * time.Minute), AgentID: "agent-01", AgentName: "Web-Prod-01", FilePath: "/var/www/html/app.py", EventType: "modify", Size: 12480, MD5: "e4d909c290d0fb1ca068ffaddf22cbd0", SHA256: "2c26b46b68ffc68ff99b453c1d30413413422d706483bfa0f98a5e886266e7ae", User: "www-data", Process: "gunicorn"},
+		{ID: "fim-0003", Timestamp: now.Add(-20 * time.Minute), AgentID: "agent-02", AgentName: "DB-Replica-01", FilePath: "/etc/postgresql/15/main/pg_hba.conf", EventType: "modify", Size: 3200, MD5: "3499fa1b5ef999bb3cdeee21115f9b88", SHA256: "a1b2c3d4e5f678901234567890abcdef1234567890abcdef1234567890abcdef", User: "postgres", Process: "postgres"},
+		{ID: "fim-0004", Timestamp: now.Add(-15 * time.Minute), AgentID: "agent-03", AgentName: "AD-Controller-01", FilePath: "C:\\Windows\\System32\\drivers\\etc\\hosts", EventType: "create", Size: 1024, MD5: "7d098f6bcd4621d373cade4e832627b4", SHA256: "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855", User: "Administrator", Process: "powershell.exe"},
+		{ID: "fim-0005", Timestamp: now.Add(-10 * time.Minute), AgentID: "agent-04", AgentName: "K8s-Worker-Node-A", FilePath: "/etc/kubernetes/manifests/kube-apiserver.yaml", EventType: "modify", Size: 2560, MD5: "b4621d373cade4e832627b4f6098f6bc", SHA256: "15d6c15b0f00a089f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd", User: "kube", Process: "kubelet"},
+		{ID: "fim-0006", Timestamp: now.Add(-5 * time.Minute), AgentID: "agent-05", AgentName: "Jumpbox-SSH", FilePath: "/etc/pam.d/common-auth", EventType: "modify", Size: 1850, MD5: "4621d373cade4e832627b4f6098f6bc0", SHA256: "055ad015a3bf4f1b2b0b822cd15d6c15b0f00a089f86d081884c7d659a2feaa", User: "root", Process: "sshd"},
+	}
+	db.FIMEvents = fimSeeds
+	db.FimCounter = len(fimSeeds)
+	if UsePostgres {
+		for _, f := range fimSeeds {
+			_ = SaveSQLFIMEvent(f)
+		}
 	}
 }
 
@@ -1169,6 +1194,20 @@ func (db *Database) syncBankSecurityLogs() {
 		logItem := logs[i]
 		if logItem.ID > lastIngestedBankLogID {
 			lastIngestedBankLogID = logItem.ID
+
+			// Filter out internal SOC UI polling requests (/api/logs, /api/summary, /api/alerts, etc.)
+			endpointLower := strings.ToLower(logItem.Endpoint)
+			payloadLower := strings.ToLower(logItem.Payload)
+			descLower := strings.ToLower(logItem.Description)
+			if strings.Contains(endpointLower, "/api/logs") ||
+				strings.Contains(endpointLower, "/api/admin/security") ||
+				strings.Contains(endpointLower, "/api/summary") ||
+				strings.Contains(endpointLower, "/api/agents") ||
+				strings.Contains(endpointLower, "/api/alerts") ||
+				strings.Contains(payloadLower, "/api/logs") ||
+				strings.Contains(descLower, "/api/logs") {
+				continue
+			}
 
 			mitreTech := "T1190"
 			mitreTactics := []string{"Initial Access"}
