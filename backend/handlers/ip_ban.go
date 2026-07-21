@@ -8,7 +8,6 @@ import (
 	"net"
 	"net/http"
 	"net/netip"
-	"net/url"
 	"os"
 	"strings"
 	"time"
@@ -63,6 +62,11 @@ func requestIPCandidates(r *http.Request) []string {
 	seen := map[string]bool{}
 	var ips []string
 
+	// In Docker/lab environments, all traffic arrives from a private gateway IP
+	// (e.g. 172.23.0.1). We must include private IPs in the candidate list so
+	// that bans on those IPs are actually enforced at the nginx gateway layer.
+	allowPrivate := strings.EqualFold(os.Getenv("AEGIS_ALLOW_PRIVATE_IP_BAN"), "true")
+
 	add := func(value string) {
 		normalized, err := NormalizeIPExpression(value)
 		if err == nil && !seen[normalized] {
@@ -71,7 +75,7 @@ func requestIPCandidates(r *http.Request) []string {
 				ipPart = ipPart[:idx]
 			}
 			if ip := net.ParseIP(ipPart); ip != nil {
-				if ip.IsLoopback() || ip.IsPrivate() || ip.IsUnspecified() {
+				if !allowPrivate && (ip.IsLoopback() || ip.IsPrivate() || ip.IsUnspecified()) {
 					return
 				}
 			}
@@ -101,9 +105,12 @@ func requestIPCandidates(r *http.Request) []string {
 func requestClientIP(r *http.Request) string {
 	candidates := requestIPCandidates(r)
 	if len(candidates) > 0 {
-		return candidates[0]
+		return strings.Trim(candidates[0], "[]")
 	}
-	return r.RemoteAddr
+	if host, _, err := net.SplitHostPort(r.RemoteAddr); err == nil {
+		return strings.Trim(host, "[]")
+	}
+	return strings.Trim(r.RemoteAddr, "[]")
 }
 
 func requestHasBannedIP(r *http.Request) (bool, string, error) {
@@ -142,34 +149,9 @@ func IPBanMiddleware(next http.Handler) http.Handler {
 	})
 }
 
-func isSOCConsoleRequest(r *http.Request) bool {
-	if r == nil {
-		return false
-	}
-	host := strings.ToLower(r.Host)
-	if host == "soc.littleboys.biz" || strings.HasPrefix(host, "soc.") {
-		return true
-	}
-	if r.Header.Get("X-Aegis-Surface") == "soc-console" {
-		return true
-	}
-	if referer := r.Header.Get("Referer"); referer != "" {
-		if u, err := url.Parse(referer); err == nil {
-			refHost := strings.ToLower(u.Hostname())
-			if refHost == "soc.littleboys.biz" || strings.HasPrefix(refHost, "soc.") {
-				return true
-			}
-		}
-	}
-	return false
-}
-
 func shouldBypassSOCIPBan(r *http.Request) bool {
 	if r == nil || r.URL == nil {
 		return false
-	}
-	if isSOCConsoleRequest(r) {
-		return true
 	}
 	if r.URL.Path == "/api/internal/ip-ban/check" {
 		return false
@@ -257,10 +239,6 @@ func writeIPBannedResponse(w http.ResponseWriter, r *http.Request) {
 func HandleInternalIPBanCheck(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet && r.Method != http.MethodHead {
 		w.WriteHeader(http.StatusMethodNotAllowed)
-		return
-	}
-	if isSOCConsoleRequest(r) {
-		w.WriteHeader(http.StatusNoContent)
 		return
 	}
 

@@ -13,7 +13,7 @@ import CloudWatchDashboard from './components/CloudWatchDashboard';
 import OrchestratorChat from './components/OrchestratorChat';
 
 export default function App() {
-  const [isAuthenticated, setIsAuthenticated] = useState<boolean | null>(null);
+  const [isAuthenticated, setIsAuthenticated] = useState<boolean>(false);
   const [isIpBanned, setIsIpBanned] = useState(false);
   const [user, setUser] = useState<string>('');
   const [activeTab, setActiveTab] = useState<string>(() => localStorage.getItem('activeTab') || 'cloudwatch');
@@ -36,11 +36,6 @@ export default function App() {
     const verify = async () => {
       try {
         const res = await fetch('/api/auth/check');
-        if (res.status === 403) {
-          setIsAuthenticated(false);
-          setIsIpBanned(true);
-          return;
-        }
         if (res.ok) {
           const data = await res.json();
           setIsAuthenticated(data.isAuthenticated);
@@ -55,16 +50,6 @@ export default function App() {
       }
     };
     verify();
-  }, []);
-
-  useEffect(() => {
-    const handleIpBanned = () => {
-      setUser('');
-      setIsAuthenticated(false);
-      setIsIpBanned(true);
-    };
-    window.addEventListener('aegis-ip-banned', handleIpBanned);
-    return () => window.removeEventListener('aegis-ip-banned', handleIpBanned);
   }, []);
 
   useEffect(() => {
@@ -121,24 +106,7 @@ export default function App() {
     }
   }, [isAuthenticated]);
 
-  // Fast ban check interval (1s) to immediately trigger the ban screen if client IP is blocked
-  useEffect(() => {
-    if (isAuthenticated === true) {
-      const banCheckInterval = setInterval(async () => {
-        try {
-          const res = await fetch('/api/auth/check');
-          if (res.status === 403) {
-            setUser('');
-            setIsAuthenticated(false);
-            setIsIpBanned(true);
-          }
-        } catch (e) {
-          // Ignore network errors during fast checking
-        }
-      }, 1000);
-      return () => clearInterval(banCheckInterval);
-    }
-  }, [isAuthenticated]);
+
 
   const handleLogout = async () => {
     try {

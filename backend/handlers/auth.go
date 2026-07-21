@@ -122,9 +122,6 @@ func generateSessionToken() string {
 
 func secureCookieForRequest(r *http.Request) bool {
 	if r == nil {
-		return true
-	}
-	if isLoopbackRequest(r) {
 		return false
 	}
 	override := strings.ToLower(strings.TrimSpace(os.Getenv("AEGIS_COOKIE_SECURE")))
@@ -134,6 +131,9 @@ func secureCookieForRequest(r *http.Request) bool {
 	if override == "false" {
 		return false
 	}
+	if isLoopbackRequest(r) {
+		return false
+	}
 	if r.TLS != nil {
 		return true
 	}
@@ -141,7 +141,7 @@ func secureCookieForRequest(r *http.Request) bool {
 	if forwardedProto == "https" {
 		return true
 	}
-	return true
+	return false
 }
 
 func isLoopbackRequest(r *http.Request) bool {
@@ -637,7 +637,7 @@ func CheckAuth(w http.ResponseWriter, r *http.Request) {
 
 	// 1. IP Binding Validation (Anti-Session Hijacking)
 	ip := getIP(r)
-	if sessionExists && sessionIP != ip && !isPrivateIP(ip) {
+	if sessionExists && sessionIP != ip && !isPrivateIP(ip) && !isPrivateIP(sessionIP) {
 		log.Printf("[SECURITY ALERT] Session IP mismatch detected on CheckAuth! Revoking session. Session IP: %s, Request IP: %s", sessionIP, ip)
 		authMu.Lock()
 		if store.UsePostgres {
@@ -788,7 +788,7 @@ func AuthMiddleware(next http.Handler) http.Handler {
 
 		// 2. IP Binding Validation (Anti-Hijacking) - Bypassed for private/VPC network interface compatibility (ALB/CloudFront)
 		ip := getIP(r)
-		if sessionExists && sessionIP != ip && !isPrivateIP(ip) {
+		if sessionExists && sessionIP != ip && !isPrivateIP(ip) && !isPrivateIP(sessionIP) {
 			log.Printf("[SECURITY ALERT] Session hijacking detected! Session IP: %s, Request IP: %s. Revoking session.", sessionIP, ip)
 			authMu.Lock()
 			if store.UsePostgres {
@@ -822,18 +822,27 @@ func AuthMiddleware(next http.Handler) http.Handler {
 
 // Helper: check if IP belongs to private network ranges
 func isPrivateIP(ipStr string) bool {
+	ipStr = strings.Trim(ipStr, "[]")
+	if host, _, err := net.SplitHostPort(ipStr); err == nil {
+		ipStr = host
+	}
+	ipStr = strings.Trim(ipStr, "[]")
+	if ipStr == "localhost" || ipStr == "127.0.0.1" || ipStr == "::1" {
+		return true
+	}
 	ip := net.ParseIP(ipStr)
 	if ip == nil {
 		return false
 	}
-	if ip.IsLoopback() {
+	if ip.IsLoopback() || ip.IsPrivate() || ip.IsUnspecified() {
 		return true
 	}
 	ipv4 := ip.To4()
 	if ipv4 != nil {
 		return ipv4[0] == 10 ||
 			(ipv4[0] == 172 && ipv4[1] >= 16 && ipv4[1] <= 31) ||
-			(ipv4[0] == 192 && ipv4[1] == 168)
+			(ipv4[0] == 192 && ipv4[1] == 168) ||
+			(ipv4[0] == 127)
 	}
 	return false
 }

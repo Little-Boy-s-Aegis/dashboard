@@ -1107,9 +1107,10 @@ func convergeMetric(current, target, maxStep, jitter, min, max float64) float64 
 }
 
 var lastIngestedBankLogID int64 = 0
+var syncFailCount int = 0
 
 func (db *Database) syncBankSecurityLogs() {
-	client := &http.Client{Timeout: 2 * time.Second}
+	client := &http.Client{Timeout: 10 * time.Second}
 	bankURL := os.Getenv("BANK_BACKEND_URL")
 	if bankURL == "" {
 		bankURL = "http://be-backend:8080"
@@ -1122,17 +1123,22 @@ func (db *Database) syncBankSecurityLogs() {
 	// I-01 fix: use env var instead of hardcoded secret
 	syncToken := os.Getenv("AEGIS_INTERNAL_TOKEN")
 	if syncToken == "" {
-		log.Printf("[SYNC WARNING] AEGIS_INTERNAL_TOKEN is empty, skipping log sync")
+		// In local mode without bank backend, silently skip
 		return
 	}
 	req.Header.Set("X-Aegis-Token", syncToken)
 
 	resp, err := client.Do(req)
 	if err != nil {
-		log.Printf("[SYNC ERROR] Failed to fetch bank logs from %s: %v", bankURL, err)
+		syncFailCount++
+		// Only log every 30 failures (1 minute at 2s interval) to reduce spam
+		if syncFailCount <= 3 || syncFailCount%30 == 0 {
+			log.Printf("[SYNC WARNING] Failed to fetch bank logs from %s (attempt %d): %v", bankURL, syncFailCount, err)
+		}
 		return
 	}
 	defer resp.Body.Close()
+	syncFailCount = 0
 
 	if resp.StatusCode != http.StatusOK {
 		log.Printf("[SYNC ERROR] Bank backend returned status %d", resp.StatusCode)

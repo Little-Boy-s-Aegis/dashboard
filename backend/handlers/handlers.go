@@ -1502,15 +1502,12 @@ func autoBlockAllowed(dec *SoarDecisionPayload, info *ParsedSoarInfo, opts soarP
 	if !autopilotEnabled {
 		return false, "SOAR autoban skipped: AI Autopilot is disabled; analyst confirmation is required."
 	}
-	isSQLi := isSQLInjectionDecision(dec, info)
+	_ = isSQLInjectionDecision(dec, info)
 	if !info.ThreatConfirmed {
 		return false, "SOAR autoban skipped: threat is not independently confirmed."
 	}
-	if strings.ToLower(info.Severity) != "critical" && info.RiskScore < 9.0 {
-		if isSQLi {
-			return false, "SOAR autoban skipped: SQL injection is alert-only below critical severity threshold."
-		}
-		return false, fmt.Sprintf("SOAR autoban skipped: critical severity or risk >= 9.0 required, got severity=%s risk=%.1f.", info.Severity, info.RiskScore)
+	if strings.ToLower(info.Severity) == "low" || info.RiskScore < 5.0 {
+		return false, fmt.Sprintf("SOAR autoban skipped: medium severity or risk >= 5.0 required, got severity=%s risk=%.1f.", info.Severity, info.RiskScore)
 	}
 	return true, ""
 }
@@ -1753,6 +1750,9 @@ func alertEligibleForAutoban(alert *models.Alert) (bool, string) {
 }
 
 func protectedIPTarget(ipExpr string) bool {
+	if strings.EqualFold(os.Getenv("AEGIS_ALLOW_PRIVATE_IP_BAN"), "true") {
+		return false
+	}
 	ipPart := ipExpr
 	if idx := strings.Index(ipPart, "/"); idx != -1 {
 		ipPart = ipPart[:idx]

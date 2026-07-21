@@ -933,7 +933,7 @@ func SaveSQLBannedIP(ip string, actor string, status string, reason string) erro
 			ipPart = ipPart[:idx]
 		}
 		if parsedIP := net.ParseIP(ipPart); parsedIP != nil {
-			if parsedIP.IsLoopback() || parsedIP.IsPrivate() || parsedIP.IsUnspecified() {
+			if (parsedIP.IsLoopback() || parsedIP.IsPrivate() || parsedIP.IsUnspecified()) && !strings.EqualFold(os.Getenv("AEGIS_ALLOW_PRIVATE_IP_BAN"), "true") {
 				return fmt.Errorf("cannot ban private or loopback IP range: %s", ip)
 			}
 		}
