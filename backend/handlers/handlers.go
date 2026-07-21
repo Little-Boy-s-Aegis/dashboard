@@ -1416,6 +1416,10 @@ func processParsedSoarDecisionWithOptions(dec *SoarDecisionPayload, info *Parsed
 func ingestExecutedSoarActions(dec *SoarDecisionPayload, info *ParsedSoarInfo, opts soarProcessOptions) []string {
 	var processedActions []string
 
+	// Deduplicate repeated Block IP skips for the same target+reason (e.g. DoS floods)
+	type skipKey struct{ target, reason string }
+	skippedBlockIPs := make(map[skipKey]int)
+
 	for _, act := range dec.Actions {
 		if act.Status != "executed" {
 			continue
@@ -1439,10 +1443,15 @@ func ingestExecutedSoarActions(dec *SoarDecisionPayload, info *ParsedSoarInfo, o
 
 		if mappedActionType == "Block IP" {
 			if allowed, reason := autoBlockAllowed(dec, info, opts); !allowed {
-				actionStatus = "blocked_by_policy"
-				detailMsg = reason
-				actionLog := appendSoarActionLog(mappedActionType, actionTarget, actionStatus, detailMsg)
-				processedActions = append(processedActions, fmt.Sprintf("%s skipped on %s: %s", actionLog.ActionType, actionLog.Target, reason))
+				key := skipKey{actionTarget, reason}
+				skippedBlockIPs[key]++
+				if skippedBlockIPs[key] == 1 {
+					// Only log the first occurrence
+					actionStatus = "blocked_by_policy"
+					detailMsg = reason
+					actionLog := appendSoarActionLog(mappedActionType, actionTarget, actionStatus, detailMsg)
+					processedActions = append(processedActions, fmt.Sprintf("%s skipped on %s: %s", actionLog.ActionType, actionLog.Target, reason))
+				}
 				continue
 			}
 
@@ -1451,10 +1460,15 @@ func ingestExecutedSoarActions(dec *SoarDecisionPayload, info *ParsedSoarInfo, o
 				actionStatus = "failed"
 				detailMsg = fmt.Sprintf("SOAR block_ip target rejected as invalid IP/CIDR: %s", act.Target.ValueMasked)
 			} else if protectedIPTarget(normalizedTarget) {
-				actionStatus = "blocked_by_policy"
-				detailMsg = "SOAR autoban skipped: private, loopback, or unspecified IP targets are never autobanned"
-				actionLog := appendSoarActionLog(mappedActionType, actionTarget, actionStatus, detailMsg)
-				processedActions = append(processedActions, fmt.Sprintf("%s skipped on %s: %s", actionLog.ActionType, actionLog.Target, detailMsg))
+				reason := "SOAR autoban skipped: private, loopback, or unspecified IP targets are never autobanned"
+				key := skipKey{actionTarget, reason}
+				skippedBlockIPs[key]++
+				if skippedBlockIPs[key] == 1 {
+					actionStatus = "blocked_by_policy"
+					detailMsg = reason
+					actionLog := appendSoarActionLog(mappedActionType, actionTarget, actionStatus, detailMsg)
+					processedActions = append(processedActions, fmt.Sprintf("%s skipped on %s: %s", actionLog.ActionType, actionLog.Target, detailMsg))
+				}
 				continue
 			} else {
 				actionTarget = normalizedTarget
@@ -1485,6 +1499,13 @@ func ingestExecutedSoarActions(dec *SoarDecisionPayload, info *ParsedSoarInfo, o
 		processedActions = append(processedActions, fmt.Sprintf("%s on %s", actionLog.ActionType, actionLog.Target))
 	}
 
+	// Append summary for deduplicated skips
+	for key, count := range skippedBlockIPs {
+		if count > 1 {
+			processedActions = append(processedActions, fmt.Sprintf("Block IP skipped on %s: %d duplicate actions suppressed", key.target, count-1))
+		}
+	}
+
 	return processedActions
 }
 
@@ -1502,9 +1523,13 @@ func autoBlockAllowed(dec *SoarDecisionPayload, info *ParsedSoarInfo, opts soarP
 	if !autopilotEnabled {
 		return false, "SOAR autoban skipped: AI Autopilot is disabled; analyst confirmation is required."
 	}
-	_ = isSQLInjectionDecision(dec, info)
+	isSQLi := isSQLInjectionDecision(dec, info)
 	if !info.ThreatConfirmed {
 		return false, "SOAR autoban skipped: threat is not independently confirmed."
+	}
+	// SQLi attacks below critical severity require analyst confirmation
+	if isSQLi && strings.ToLower(info.Severity) != "critical" {
+		return false, fmt.Sprintf("SOAR autoban skipped: SQL injection at %s severity requires analyst confirmation.", info.Severity)
 	}
 	if strings.ToLower(info.Severity) == "low" || info.RiskScore < 5.0 {
 		return false, fmt.Sprintf("SOAR autoban skipped: medium severity or risk >= 5.0 required, got severity=%s risk=%.1f.", info.Severity, info.RiskScore)
