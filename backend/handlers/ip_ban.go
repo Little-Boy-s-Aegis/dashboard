@@ -198,7 +198,8 @@ func revokeDashboardAuth(w http.ResponseWriter, r *http.Request) {
 func writeIPBannedResponse(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("X-Aegis-IP-Banned", "true")
 	w.Header().Set("Cache-Control", "no-store, no-cache, max-age=0, must-revalidate")
-	w.Header().Set("Clear-Site-Data", "\"cache\", \"cookies\", \"storage\"")
+	// Do NOT clear "cookies" — it would wipe the SOC session_token cookie too.
+	w.Header().Set("Clear-Site-Data", "\"cache\", \"storage\"")
 
 	accept := r.Header.Get("Accept")
 	if strings.Contains(accept, "text/html") && !strings.Contains(accept, "application/json") {
