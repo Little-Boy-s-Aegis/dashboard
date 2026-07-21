@@ -140,8 +140,7 @@ func IPBanMiddleware(next http.Handler) http.Handler {
 			return
 		}
 		if banned {
-			log.Printf("[IP BAN] Blocked dashboard request from banned IP %s", ip)
-			revokeDashboardAuth(w, r)
+			log.Printf("[IP BAN] Blocked request from banned IP %s", ip)
 			writeIPBannedResponse(w, r)
 			return
 		}
@@ -159,8 +158,10 @@ func shouldBypassSOCIPBan(r *http.Request) bool {
 	if r.Header.Get("X-Aegis-Surface") == "soc-console" {
 		return true
 	}
+	// SOC API requests (/api/*) are management APIs for SOC operators
+	// and should NOT be blocked by target IP bans so operators can always manage the platform.
 	if strings.HasPrefix(r.URL.Path, "/api/") {
-		return !strings.EqualFold(os.Getenv("AEGIS_ENFORCE_SOC_IP_BAN"), "true")
+		return true
 	}
 	return false
 }

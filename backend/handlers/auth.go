@@ -609,16 +609,14 @@ func CheckAuth(w http.ResponseWriter, r *http.Request) {
 
 	var sessionUID string
 	var sessionUsername string
-	var sessionIP string
 	var sessionExpiresAt time.Time
 	var sessionExists bool
 
 	if store.UsePostgres {
-		dbUid, dbUsername, dbIp, dbExpiresAt, err := store.GetSQLSession(sessionToken)
+		dbUid, dbUsername, _, dbExpiresAt, err := store.GetSQLSession(sessionToken)
 		if err == nil {
 			sessionUID = dbUid
 			sessionUsername = dbUsername
-			sessionIP = dbIp
 			sessionExpiresAt = dbExpiresAt
 			sessionExists = true
 		}
@@ -628,26 +626,13 @@ func CheckAuth(w http.ResponseWriter, r *http.Request) {
 		if exists {
 			sessionUID = session.UID
 			sessionUsername = session.Username
-			sessionIP = session.IPAddress
 			sessionExpiresAt = session.ExpiresAt
 			sessionExists = true
 		}
 		authMu.RUnlock()
 	}
 
-	// 1. IP Binding Validation (Anti-Session Hijacking)
-	ip := getIP(r)
-	if sessionExists && sessionIP != ip && !isPrivateIP(ip) && !isPrivateIP(sessionIP) {
-		log.Printf("[SECURITY ALERT] Session IP mismatch detected on CheckAuth! Revoking session. Session IP: %s, Request IP: %s", sessionIP, ip)
-		authMu.Lock()
-		if store.UsePostgres {
-			store.DeleteSQLSession(sessionToken)
-		} else {
-			delete(sessionStore, sessionToken)
-		}
-		authMu.Unlock()
-		sessionExists = false
-	}
+
 
 	if !sessionExists || time.Now().After(sessionExpiresAt) {
 		if sessionExists && time.Now().After(sessionExpiresAt) {
@@ -765,14 +750,12 @@ func AuthMiddleware(next http.Handler) http.Handler {
 		}
 
 		var sessionExpiresAt time.Time
-		var sessionIP string
 		var sessionExists bool
 
 		if store.UsePostgres {
-			_, _, dbIp, dbExpiresAt, err := store.GetSQLSession(sessionToken)
+			_, _, _, dbExpiresAt, err := store.GetSQLSession(sessionToken)
 			if err == nil {
 				sessionExpiresAt = dbExpiresAt
-				sessionIP = dbIp
 				sessionExists = true
 			}
 		} else {
@@ -780,25 +763,12 @@ func AuthMiddleware(next http.Handler) http.Handler {
 			session, exists := sessionStore[sessionToken]
 			if exists {
 				sessionExpiresAt = session.ExpiresAt
-				sessionIP = session.IPAddress
 				sessionExists = true
 			}
 			authMu.RUnlock()
 		}
 
-		// 2. IP Binding Validation (Anti-Hijacking) - Bypassed for private/VPC network interface compatibility (ALB/CloudFront)
-		ip := getIP(r)
-		if sessionExists && sessionIP != ip && !isPrivateIP(ip) && !isPrivateIP(sessionIP) {
-			log.Printf("[SECURITY ALERT] Session hijacking detected! Session IP: %s, Request IP: %s. Revoking session.", sessionIP, ip)
-			authMu.Lock()
-			if store.UsePostgres {
-				store.DeleteSQLSession(sessionToken)
-			} else {
-				delete(sessionStore, sessionToken)
-			}
-			authMu.Unlock()
-			sessionExists = false
-		}
+
 
 		if !sessionExists || time.Now().After(sessionExpiresAt) {
 			if sessionExists && time.Now().After(sessionExpiresAt) {

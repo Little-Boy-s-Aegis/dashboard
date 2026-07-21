@@ -14,7 +14,6 @@ import OrchestratorChat from './components/OrchestratorChat';
 
 export default function App() {
   const [isAuthenticated, setIsAuthenticated] = useState<boolean>(false);
-  const [isIpBanned, setIsIpBanned] = useState(false);
   const [user, setUser] = useState<string>('');
   const [activeTab, setActiveTab] = useState<string>(() => localStorage.getItem('activeTab') || 'cloudwatch');
   const [timeRange, setTimeRange] = useState<string>(() => localStorage.getItem('timeRange') || '24h');
@@ -72,24 +71,6 @@ export default function App() {
         fetch('/api/summary'), fetch('/api/alerts?limit=500'), fetch('/api/agents'), fetch('/api/fim'), fetch('/api/actions?limit=300')
       ]);
 
-      const hasForbidden = [summaryRes, alertsRes, agentsRes, fimRes, actionsRes].some(
-        res => res.status === 'fulfilled' && res.value.status === 403
-      );
-      if (hasForbidden) {
-        setUser('');
-        setIsAuthenticated(false);
-        setIsIpBanned(true);
-        return;
-      }
-
-      const hasUnauthorized = [summaryRes, alertsRes, agentsRes, fimRes, actionsRes].some(
-        res => res.status === 'fulfilled' && res.value.status === 401
-      );
-      if (hasUnauthorized) {
-        setIsAuthenticated(false);
-        return;
-      }
-
       if (summaryRes.status === 'fulfilled' && summaryRes.value.ok) setSummary(await summaryRes.value.json());
       if (alertsRes.status === 'fulfilled' && alertsRes.value.ok) setAlerts(await alertsRes.value.json());
       if (agentsRes.status === 'fulfilled' && agentsRes.value.ok) setAgents(await agentsRes.value.json());
@@ -102,7 +83,19 @@ export default function App() {
     if (isAuthenticated === true) {
       refreshAllData();
       const interval = setInterval(refreshAllData, 5000);
-      return () => clearInterval(interval);
+      const authCheckInterval = setInterval(async () => {
+        try {
+          const res = await fetch('/api/auth/check');
+          if (res.ok) {
+            const data = await res.json();
+            if (!data.isAuthenticated) setIsAuthenticated(false);
+          }
+        } catch { /* ignore network error */ }
+      }, 30000);
+      return () => {
+        clearInterval(interval);
+        clearInterval(authCheckInterval);
+      };
     }
   }, [isAuthenticated]);
 
@@ -165,47 +158,7 @@ export default function App() {
     { key: 'logs', icon: Terminal, label: 'Logs' },
   ];
 
-  if (isIpBanned) {
-    return (
-      <div style={{
-        minHeight: '100vh',
-        display: 'flex',
-        alignItems: 'center',
-        justifyContent: 'center',
-        background: 'var(--bg-body)',
-        padding: 24
-      }}>
-        <div className="glass-panel" style={{
-          width: '100%',
-          maxWidth: 560,
-          padding: 32,
-          borderColor: 'rgba(244, 63, 94, 0.35)',
-          boxShadow: '0 24px 80px rgba(0,0,0,0.35)'
-        }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 18 }}>
-            <Shield size={22} style={{ color: 'var(--critical)' }} />
-            <span style={{
-              fontSize: '0.68rem',
-              color: 'var(--critical-dim)',
-              fontWeight: 700,
-              letterSpacing: '0.18em',
-              textTransform: 'uppercase',
-              fontFamily: "'IBM Plex Mono', monospace"
-            }}>
-              403 IP Banned
-            </span>
-          </div>
-          <h1 style={{ fontSize: '1.8rem', marginBottom: 12 }}>Access revoked</h1>
-          <p style={{ marginBottom: 8 }}>
-            This IP address has been blocked by the Aegis SOC security policy.
-          </p>
-          <p>
-            Your active SOC session has been revoked and browser authentication state has been cleared.
-          </p>
-        </div>
-      </div>
-    );
-  }
+
 
   if (isAuthenticated === null) {
     return (
