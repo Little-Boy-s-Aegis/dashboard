@@ -609,14 +609,16 @@ func CheckAuth(w http.ResponseWriter, r *http.Request) {
 
 	var sessionUID string
 	var sessionUsername string
+	var sessionIP string
 	var sessionExpiresAt time.Time
 	var sessionExists bool
 
 	if store.UsePostgres {
-		dbUid, dbUsername, _, dbExpiresAt, err := store.GetSQLSession(sessionToken)
+		dbUid, dbUsername, dbIp, dbExpiresAt, err := store.GetSQLSession(sessionToken)
 		if err == nil {
 			sessionUID = dbUid
 			sessionUsername = dbUsername
+			sessionIP = dbIp
 			sessionExpiresAt = dbExpiresAt
 			sessionExists = true
 		}
@@ -626,10 +628,18 @@ func CheckAuth(w http.ResponseWriter, r *http.Request) {
 		if exists {
 			sessionUID = session.UID
 			sessionUsername = session.Username
+			sessionIP = session.IPAddress
 			sessionExpiresAt = session.ExpiresAt
 			sessionExists = true
 		}
 		authMu.RUnlock()
+	}
+
+	// Session Hijacking Check: Enforce strictly for external public IP mismatches
+	ip := getIP(r)
+	if sessionExists && sessionIP != "" && sessionIP != ip && !isPrivateIP(ip) && !isPrivateIP(sessionIP) {
+		log.Printf("[SECURITY ALERT] Session hijacking detected! Session IP: %s, Request IP: %s", sessionIP, ip)
+		sessionExists = false
 	}
 
 
@@ -750,12 +760,14 @@ func AuthMiddleware(next http.Handler) http.Handler {
 		}
 
 		var sessionExpiresAt time.Time
+		var sessionIP string
 		var sessionExists bool
 
 		if store.UsePostgres {
-			_, _, _, dbExpiresAt, err := store.GetSQLSession(sessionToken)
+			_, _, dbIp, dbExpiresAt, err := store.GetSQLSession(sessionToken)
 			if err == nil {
 				sessionExpiresAt = dbExpiresAt
+				sessionIP = dbIp
 				sessionExists = true
 			}
 		} else {
@@ -763,9 +775,17 @@ func AuthMiddleware(next http.Handler) http.Handler {
 			session, exists := sessionStore[sessionToken]
 			if exists {
 				sessionExpiresAt = session.ExpiresAt
+				sessionIP = session.IPAddress
 				sessionExists = true
 			}
 			authMu.RUnlock()
+		}
+
+		// Session Hijacking Check: Enforce strictly for external public IP mismatches
+		ip := getIP(r)
+		if sessionExists && sessionIP != "" && sessionIP != ip && !isPrivateIP(ip) && !isPrivateIP(sessionIP) {
+			log.Printf("[SECURITY ALERT] Session hijacking detected! Session IP: %s, Request IP: %s", sessionIP, ip)
+			sessionExists = false
 		}
 
 
