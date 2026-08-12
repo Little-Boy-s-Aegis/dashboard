@@ -63,11 +63,13 @@ func NotifySecurityAlert(alert *models.Alert) {
 func SecurityAlertSeverity(attackType string, status string, payload string, description string) string {
 	statusUpper := strings.ToUpper(strings.TrimSpace(status))
 	isSQLi := IsSQLInjectionText(attackType, payload, description)
+	if isSQLi {
+		// Authentication SQLi targets a public banking edge and is eligible for
+		// immediate containment whether the application blocked or allowed it.
+		return "critical"
+	}
 
 	if statusUpper == "ALLOWED" {
-		if isSQLi {
-			return "high"
-		}
 		return "critical"
 	}
 
@@ -76,9 +78,6 @@ func SecurityAlertSeverity(attackType string, status string, payload string, des
 		return "low"
 	}
 
-	if isSQLi {
-		return "medium"
-	}
 	return "high"
 }
 

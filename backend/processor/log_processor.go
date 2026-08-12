@@ -117,6 +117,17 @@ func pushToDashboardStore(logEntry *models.LogEntry) {
 			}
 		}
 
+		rawLogBytes, _ := json.Marshal(map[string]interface{}{
+			"timestamp":      logEntry.Timestamp,
+			"threatType":     logEntry.ThreatType,
+			"sourceIp":       logEntry.SourceIP,
+			"source_ip":      logEntry.SourceIP,
+			"facility":       logEntry.Facility,
+			"message":        logEntry.Message,
+			"decodedPayload": logEntry.DecodedPayload,
+			"statusCode":     logEntry.StatusCode,
+		})
+
 		db.AddAlert(&models.Alert{
 			ID:             alertID,
 			RuleID:         fmt.Sprintf("rule-siem-%s", subID),
@@ -129,7 +140,7 @@ func pushToDashboardStore(logEntry *models.LogEntry) {
 			MITRETactics:   []string{"Initial Access"},
 			Category:       "audit",
 			Timestamp:      logEntry.Timestamp,
-			RawLog:         logEntry.DecodedPayload,
+			RawLog:         string(rawLogBytes),
 			Status:         "open",
 		})
 	}

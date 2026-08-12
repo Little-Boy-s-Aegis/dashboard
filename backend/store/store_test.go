@@ -8,6 +8,22 @@ import (
 	_ "github.com/lib/pq"
 )
 
+func TestSecurityAlertSeveritySQLInjectionIsCritical(t *testing.T) {
+	for _, status := range []string{"BLOCKED", "ALLOWED"} {
+		t.Run(status, func(t *testing.T) {
+			severity := SecurityAlertSeverity(
+				"SQL_INJECTION",
+				status,
+				"username=admin ' OR '1'='1' --",
+				"SQL injection attempt against the banking login",
+			)
+			if severity != "critical" {
+				t.Fatalf("expected critical SQLi severity for %s event, got %s", status, severity)
+			}
+		})
+	}
+}
+
 func TestSimulateAttack(t *testing.T) {
 	alertID := DB.SimulateAttack("agent-01", "ransomware")
 	if alertID == "Agent not found" || alertID == "" {
