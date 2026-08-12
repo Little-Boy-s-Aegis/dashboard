@@ -17,6 +17,16 @@ const getAttackerIp = (rawLog?: string): string => {
   }
 };
 
+const formatRawLog = (rawLog?: string): string => {
+  if (!rawLog) return '{}';
+
+  try {
+    return JSON.stringify(JSON.parse(rawLog), null, 2);
+  } catch {
+    return rawLog;
+  }
+};
+
 interface Props {
   alerts: Alert[];
   onRefresh: () => void;
@@ -483,7 +493,7 @@ export default function AlertsManager({ alerts, onRefresh, initialMitreFilter, o
               <Terminal size={11} /> Raw Event
             </span>
             <pre style={{ background: 'var(--bg-body)', padding: 10, borderRadius: 'var(--r-xs)', border: '1px solid var(--border-1)', overflowX: 'auto', color: 'var(--low)', fontSize: '0.72rem', margin: 0, fontFamily: "'IBM Plex Mono', monospace" }}>
-              {JSON.stringify(JSON.parse(selected.rawLog || '{}'), null, 2)}
+              {formatRawLog(selected.rawLog)}
             </pre>
           </div>
         </div>
