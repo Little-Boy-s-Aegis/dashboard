@@ -9,9 +9,11 @@ interface SoarMetrics {
   successRate: number;
   avgResponseTimeSeconds: number;
   slaUnder15Pct?: number;
+  sla15To30Pct?: number;
   slaUnder30Pct?: number;
   slaOver30Pct?: number;
   slaSampleCount?: number;
+  slaExcludedActionCount?: number;
 }
 
 interface Props {
@@ -29,7 +31,7 @@ const SECURITY_ACTION_TYPES = new Set([
   'Force Logout',
 ]);
 
-export default function SoarPerformanceDashboard({ actions, alerts }: Props) {
+export default function SoarPerformanceDashboard({ actions }: Props) {
   const [metrics, setMetrics] = useState<SoarMetrics | null>(null);
   const [loading, setLoading] = useState(true);
   const [autopilotEnabled, setAutopilotEnabled] = useState(false);
@@ -168,69 +170,17 @@ export default function SoarPerformanceDashboard({ actions, alerts }: Props) {
   }, [bannedIPs]);
 
   const slaStats = useMemo(() => {
-    if (metrics?.slaUnder30Pct !== undefined && (metrics.slaSampleCount ?? 0) > 0) {
-      return {
-        under15Pct: metrics.slaUnder15Pct ?? 100.0,
-        under30Pct: metrics.slaUnder30Pct ?? 100.0,
-        over30Pct: metrics.slaOver30Pct ?? 0.0,
-        total: metrics.slaSampleCount ?? 0
-      };
-    }
-
-    const alertsById = new Map<string, Alert>();
-    const recentAlerts = (alerts || []).slice(0, 500);
-    recentAlerts.forEach(alert => {
-      alertsById.set(alert.id, alert);
-      if (alert.ruleId?.startsWith('rule-soar-')) {
-        alertsById.set(alert.ruleId.replace('rule-soar-', ''), alert);
-      }
-      if (alert.ruleId?.startsWith('rule-sim-')) {
-        alertsById.set(alert.ruleId.replace('rule-sim-', ''), alert);
-      }
-    });
-
-    let under15 = 0;
-    let under30 = 0;
-    let over30 = 0;
-    let total = 0;
-
-    soarActions.slice(0, 200).forEach(act => {
-      const incidentIdMatch = act.message ? act.message.match(/Incident:\s*([a-zA-Z0-9_-]+)/) : null;
-      const incidentId = incidentIdMatch ? incidentIdMatch[1] : null;
-      const matchingAlert = incidentId ? alertsById.get(incidentId) : undefined;
-
-      if (matchingAlert) {
-        const duration = (new Date(act.timestamp).getTime() - new Date(matchingAlert.timestamp).getTime()) / 1000;
-        if (duration > 0 && duration <= 300) {
-          total++;
-          if (duration < 15) {
-            under15++;
-            under30++;
-          } else if (duration <= 30) {
-            under30++;
-          } else {
-            over30++;
-          }
-        }
-      } else {
-        // Fast automated containment response time sample (< 15s)
-        total++;
-        under15++;
-        under30++;
-      }
-    });
-
-    if (total === 0) {
-      return { under15Pct: 100.0, under30Pct: 100.0, over30Pct: 0.0, total: 0 };
-    }
-
+    const under15Pct = metrics?.slaUnder15Pct ?? 0;
+    const under30Pct = metrics?.slaUnder30Pct ?? 0;
     return {
-      under15Pct: Math.round((under15 / total) * 1000) / 10,
-      under30Pct: Math.round((under30 / total) * 1000) / 10,
-      over30Pct: Math.round((over30 / total) * 1000) / 10,
-      total
+      under15Pct,
+      between15And30Pct: metrics?.sla15To30Pct ?? Math.max(0, under30Pct - under15Pct),
+      under30Pct,
+      over30Pct: metrics?.slaOver30Pct ?? 0,
+      total: metrics?.slaSampleCount ?? 0,
+      excluded: metrics?.slaExcludedActionCount ?? 0
     };
-  }, [metrics, soarActions, alerts]);
+  }, [metrics]);
 
   if (loading || !metrics) {
     return (
@@ -296,10 +246,12 @@ export default function SoarPerformanceDashboard({ actions, alerts }: Props) {
             <Clock size={14} style={{ color: 'var(--info)', opacity: 0.6 }} />
           </div>
           <div className="kpi-value" style={{ color: 'var(--info)', fontFamily: "'IBM Plex Mono', monospace", fontSize: '2rem', fontWeight: 700, margin: '8px 0 4px' }}>
-            {((metrics.avgResponseTimeSeconds && metrics.avgResponseTimeSeconds > 0) ? metrics.avgResponseTimeSeconds : 0.8).toFixed(1)}s
+            {slaStats.total > 0 ? metrics.avgResponseTimeSeconds.toFixed(1) + 's' : 'N/A'}
           </div>
           <div className="kpi-trend" style={{ fontSize: '0.7rem', color: 'var(--text-3)' }}>
-            From ingestion to API mitigation
+            {slaStats.total > 0
+              ? slaStats.total + ' measured alert-to-action sample' + (slaStats.total !== 1 ? 's' : '')
+              : 'No measurable alert-to-action pairs'}
           </div>
         </div>
 
@@ -310,7 +262,7 @@ export default function SoarPerformanceDashboard({ actions, alerts }: Props) {
             <ShieldCheck size={14} style={{ color: 'var(--purple)', opacity: 0.6 }} />
           </div>
           <div className="kpi-value" style={{ color: 'var(--purple)', fontFamily: "'IBM Plex Mono', monospace", fontSize: '2rem', fontWeight: 700, margin: '8px 0 4px' }}>
-            {slaStats.under30Pct.toFixed(1)}%
+            {slaStats.total > 0 ? slaStats.under30Pct.toFixed(1) + '%' : 'N/A'}
           </div>
           <div className="kpi-trend" style={{ fontSize: '0.7rem', color: 'var(--text-3)' }}>
             Within target 30s response SLA
@@ -430,28 +382,33 @@ export default function SoarPerformanceDashboard({ actions, alerts }: Props) {
           
           {/* SLA Distribution */}
           <div className="glass-panel" style={{ padding: 16 }}>
-            <h3 style={{ fontSize: '0.85rem', color: 'var(--text-0)', marginBottom: 12 }}>SLA Compliance Distribution</h3>
+            <h3 style={{ fontSize: '0.85rem', color: 'var(--text-0)', marginBottom: 4 }}>SLA Compliance Distribution</h3>
+            <p style={{ fontSize: '0.68rem', color: 'var(--text-3)', margin: '0 0 12px' }}>
+              {slaStats.total > 0
+                ? slaStats.total + ' measured sample' + (slaStats.total !== 1 ? 's' : '') + '; ' + slaStats.excluded + ' action' + (slaStats.excluded !== 1 ? 's' : '') + ' excluded without a valid incident timing link'
+                : 'No measured samples; ' + slaStats.excluded + ' action' + (slaStats.excluded !== 1 ? 's' : '') + ' excluded without a valid incident timing link'}
+            </p>
             <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
               
               {/* Under 15s Card */}
               <div>
                 <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.8rem', marginBottom: 4 }}>
                   <span>Fast Containment (&lt; 15s)</span>
-                  <span style={{ fontFamily: "'IBM Plex Mono', monospace", fontWeight: 600, color: 'var(--low)' }}>{slaStats.under15Pct.toFixed(1)}%</span>
+                  <span style={{ fontFamily: "'IBM Plex Mono', monospace", fontWeight: 600, color: 'var(--low)' }}>{slaStats.total > 0 ? slaStats.under15Pct.toFixed(1) + '%' : 'N/A'}</span>
                 </div>
                 <div style={{ width: '100%', height: 4, background: 'var(--border-0)', borderRadius: 2 }}>
                   <div style={{ width: `${slaStats.under15Pct}%`, height: '100%', background: 'var(--low)', borderRadius: 2 }} />
                 </div>
               </div>
 
-              {/* Target SLA 30s Card */}
+              {/* 15-30s SLA bucket */}
               <div>
                 <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.8rem', marginBottom: 4 }}>
-                  <span>SLA Threshold (30s)</span>
-                  <span style={{ fontFamily: "'IBM Plex Mono', monospace", fontWeight: 600, color: 'var(--info)' }}>{slaStats.under30Pct.toFixed(1)}%</span>
+                  <span>Within SLA (15–30s)</span>
+                  <span style={{ fontFamily: "'IBM Plex Mono', monospace", fontWeight: 600, color: 'var(--info)' }}>{slaStats.total > 0 ? slaStats.between15And30Pct.toFixed(1) + '%' : 'N/A'}</span>
                 </div>
                 <div style={{ width: '100%', height: 4, background: 'var(--border-0)', borderRadius: 2 }}>
-                  <div style={{ width: `${slaStats.under30Pct}%`, height: '100%', background: 'var(--info)', borderRadius: 2 }} />
+                  <div style={{ width: slaStats.between15And30Pct + '%', height: '100%', background: 'var(--info)', borderRadius: 2 }} />
                 </div>
               </div>
 
@@ -459,7 +416,7 @@ export default function SoarPerformanceDashboard({ actions, alerts }: Props) {
               <div>
                 <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.8rem', marginBottom: 4 }}>
                   <span>SLA Violations (&gt; 30s)</span>
-                  <span style={{ fontFamily: "'IBM Plex Mono', monospace", fontWeight: 600, color: 'var(--text-3)' }}>{slaStats.over30Pct.toFixed(1)}%</span>
+                  <span style={{ fontFamily: "'IBM Plex Mono', monospace", fontWeight: 600, color: 'var(--text-3)' }}>{slaStats.total > 0 ? slaStats.over30Pct.toFixed(1) + '%' : 'N/A'}</span>
                 </div>
                 <div style={{ width: '100%', height: 4, background: 'var(--border-0)', borderRadius: 2 }}>
                   <div style={{ width: `${slaStats.over30Pct}%`, height: '100%', background: 'var(--critical)', borderRadius: 2 }} />

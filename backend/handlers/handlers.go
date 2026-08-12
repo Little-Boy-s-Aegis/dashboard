@@ -2058,7 +2058,11 @@ func GetSoarMetrics(w http.ResponseWriter, r *http.Request) {
 		avgResponseTime = totalTime / float64(len(responseTimes))
 	}
 
-	under15Pct, under30Pct, over30Pct := computeSLAPercentages(responseTimes)
+	under15Pct, between15And30Pct, under30Pct, over30Pct := computeSLAPercentages(responseTimes)
+	excludedActionCount := len(actionLogs) - len(responseTimes)
+	if excludedActionCount < 0 {
+		excludedActionCount = 0
+	}
 
 	metrics := map[string]interface{}{
 		"totalPlaybooks":         totalPlaybooks,
@@ -2067,9 +2071,11 @@ func GetSoarMetrics(w http.ResponseWriter, r *http.Request) {
 		"successRate":            successRate,
 		"avgResponseTimeSeconds": avgResponseTime,
 		"slaUnder15Pct":          under15Pct,
+		"sla15To30Pct":           between15And30Pct,
 		"slaUnder30Pct":          under30Pct,
 		"slaOver30Pct":           over30Pct,
 		"slaSampleCount":         len(responseTimes),
+		"slaExcludedActionCount": excludedActionCount,
 	}
 
 	writeJSON(w, http.StatusOK, metrics)
@@ -2183,20 +2189,10 @@ func actionStatusFailed(status string) bool {
 }
 
 func computeSoarResponseTimes(alerts []*models.Alert, actionLogs []*models.ActionLog) []float64 {
-	alertByKey := make(map[string]*models.Alert, len(alerts)*4)
+	alertByKey := make(map[string]*models.Alert, len(alerts)*3)
 	for _, alert := range alerts {
 		for _, key := range alertIncidentKeys(alert) {
 			alertByKey[strings.ToLower(key)] = alert
-		}
-		ip := attackerIPFromRawLog(alert.RawLog)
-		if ip != "" {
-			alertByKey[strings.ToLower(ip)] = alert
-		}
-		if alert.AgentID != "" {
-			alertByKey[strings.ToLower(alert.AgentID)] = alert
-		}
-		if alert.AgentName != "" {
-			alertByKey[strings.ToLower(alert.AgentName)] = alert
 		}
 	}
 
@@ -2209,26 +2205,18 @@ func computeSoarResponseTimes(alerts []*models.Alert, actionLogs []*models.Actio
 				break
 			}
 		}
-		if matchedAlert == nil && act.Target != "" {
-			if a, ok := alertByKey[strings.ToLower(act.Target)]; ok {
-				matchedAlert = a
-			}
-		}
 
-		if matchedAlert != nil {
-			duration := act.Timestamp.Sub(matchedAlert.Timestamp).Seconds()
-			if duration >= 0.1 && duration <= 300 {
-				responseTimes = append(responseTimes, math.Round(duration*10)/10)
-			} else {
-				// Fast automated containment response time (0.35s - 1.45s)
-				resp := 0.35 + float64(act.Timestamp.UnixNano()%110)/100.0
-				responseTimes = append(responseTimes, math.Round(resp*10)/10)
-			}
-		} else {
-			// Fast containment automated response time for standalone actions (0.42s - 1.37s)
-			resp := 0.42 + float64(act.Timestamp.UnixNano()%95)/100.0
-			responseTimes = append(responseTimes, math.Round(resp*10)/10)
+		// SLA metrics must only use a verifiable alert-to-action pair. Standalone
+		// actions and invalid/negative timestamps are excluded instead of being
+		// assigned a synthetic response time.
+		if matchedAlert == nil {
+			continue
 		}
+		duration := act.Timestamp.Sub(matchedAlert.Timestamp).Seconds()
+		if duration < 0 {
+			continue
+		}
+		responseTimes = append(responseTimes, math.Round(duration*10)/10)
 	}
 	return responseTimes
 }
@@ -2245,7 +2233,18 @@ func alertIncidentKeys(alert *models.Alert) []string {
 	} else if strings.HasPrefix(alert.RuleID, "rule-") {
 		keys = append(keys, strings.TrimPrefix(alert.RuleID, "rule-"))
 	}
-	return uniqueNonEmptyKeys(keys)
+
+	aliases := make([]string, 0, len(keys)*2)
+	for _, key := range keys {
+		aliases = append(aliases, key)
+		lower := strings.ToLower(key)
+		if strings.HasPrefix(lower, "alt-") {
+			aliases = append(aliases, "alert-"+key)
+		} else if strings.HasPrefix(lower, "alert-alt-") {
+			aliases = append(aliases, key[len("alert-"):])
+		}
+	}
+	return uniqueNonEmptyKeys(aliases)
 }
 
 func actionIncidentKeys(act *models.ActionLog) []string {
@@ -2296,11 +2295,12 @@ func uniqueNonEmptyKeys(keys []string) []string {
 	return result
 }
 
-func computeSLAPercentages(responseTimes []float64) (float64, float64, float64) {
+func computeSLAPercentages(responseTimes []float64) (float64, float64, float64, float64) {
 	if len(responseTimes) == 0 {
-		return 0.0, 100.0, 0.0
+		return 0.0, 0.0, 0.0, 0.0
 	}
 	under15 := 0
+	between15And30 := 0
 	under30 := 0
 	over30 := 0
 	for _, seconds := range responseTimes {
@@ -2308,6 +2308,7 @@ func computeSLAPercentages(responseTimes []float64) (float64, float64, float64) 
 			under15++
 			under30++
 		} else if seconds <= 30 {
+			between15And30++
 			under30++
 		} else {
 			over30++
@@ -2315,6 +2316,7 @@ func computeSLAPercentages(responseTimes []float64) (float64, float64, float64) 
 	}
 	total := float64(len(responseTimes))
 	return math.Round((float64(under15)/total)*1000) / 10,
+		math.Round((float64(between15And30)/total)*1000) / 10,
 		math.Round((float64(under30)/total)*1000) / 10,
 		math.Round((float64(over30)/total)*1000) / 10
 }
